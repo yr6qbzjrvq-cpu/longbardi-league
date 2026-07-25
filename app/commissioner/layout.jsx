@@ -86,6 +86,9 @@ export default function CommissionerLayout({ children }) {
               </div>
               <div className="cm-navbar">
                 <Link href="/commissioner">Front Page</Link>
+                <Link href="/commissioner/announcements">
+                  Words of the Commissioner
+                </Link>
                 <Link href="/commissioner/standings">Standings of Heroes</Link>
                 <Link href="/">Exit to HSPN</Link>
               </div>

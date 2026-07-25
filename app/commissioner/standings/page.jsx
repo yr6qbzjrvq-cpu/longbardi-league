@@ -11,8 +11,7 @@ export default function StandingsOfHeroes() {
     <div>
       <h2 className="cm-h2">☭ OFFICIAL STANDINGS OF HEROES ☭</h2>
       <div className="cm-date">
-        Season {LEAGUE.season} &middot; Certified 100% accurate by the
-        Ministry of Records &middot; Recounts are unnecessary and illegal
+        Season {LEAGUE.season} &middot; Ministry of Records
       </div>
       <hr className="cm-hr" />
 
@@ -23,12 +22,12 @@ export default function StandingsOfHeroes() {
           style={{
             border: "2px solid #000080",
             fontSize: "15px",
-            minWidth: "460px",
+            minWidth: "360px",
           }}
         >
           <tbody>
             <tr style={{ background: "#000080", color: "#ffff00" }}>
-              <td width="40">
+              <td width="50">
                 <b>Rank</b>
               </td>
               <td>
@@ -37,25 +36,16 @@ export default function StandingsOfHeroes() {
               <td width="90">
                 <b>Record</b>
               </td>
-              <td width="150">
-                <b>Loyalty Rating</b>
-              </td>
             </tr>
             <tr style={{ background: "#ffff99" }}>
               <td>
                 <b style={{ color: "#cc0000" }}>1 ★</b>
               </td>
               <td>
-                <b style={{ color: "#cc0000" }}>
-                  AUSTIN — Our Glorious Commissioner
-                </b>
-                <span className="cm-new"> ■ ETERNAL</span>
+                <b style={{ color: "#cc0000" }}>AUSTIN</b>
               </td>
               <td>
                 <b>∞ – 0</b>
-              </td>
-              <td>
-                <b>BEYOND MEASURE</b>
               </td>
             </tr>
             {others.map((t, i) => (
@@ -68,48 +58,24 @@ export default function StandingsOfHeroes() {
                 <td>
                   {t.wins}-{t.losses}
                 </td>
-                <td>Adequate</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p style={{ fontSize: "12px", color: "#808080" }}>
-        * First place is a permanent structural feature of the table and is not
-        subject to the outcome of games. All other placements were determined
-        fairly.
-      </p>
 
       <hr className="cm-hr" />
       <h2 className="cm-h2">🏆 THE ETERNAL TROPHY RACK 🏆</h2>
-      <p>
-        Following a routine audit, the Ministry of Records has officially
-        corrected the championship archives. The corrected results are
-        displayed below. The Ministry thanks the previous &ldquo;champions&rdquo;
-        for their years of custodial service to the trophies.
-      </p>
       <div className="cm-trophies">
         {TROPHY_YEARS.map((y) => (
           <div key={y} className="cm-trophy">
             <div style={{ fontSize: "40px" }}>🏆</div>
-            <b style={{ color: "#cc0000" }}>{y} CHAMPION</b>
+            <b style={{ color: "#cc0000" }}>{y}</b>
             <br />
             <b>AUSTIN</b>
-            <br />
-            <span style={{ fontSize: "11px", color: "#808080" }}>
-              {y === 2026
-                ? "Awarded in advance for efficiency."
-                : "Unanimous. Historic. Inevitable."}
-            </span>
           </div>
         ))}
       </div>
-      <p style={{ textAlign: "center", fontSize: "13px" }}>
-        <b>
-          Rumors of other champions are Western fabrications and will be
-          reported to the Ministry.
-        </b>
-      </p>
     </div>
   );
 }

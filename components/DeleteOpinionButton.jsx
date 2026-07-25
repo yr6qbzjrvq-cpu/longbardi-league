@@ -12,7 +12,7 @@ export default function DeleteOpinionButton({ id }) {
     setBusy(true);
     const res = await fetch(`/api/admin/opinions/${id}`, { method: "DELETE" });
     if (res.ok) {
-      router.push("/opinions");
+      router.push("/discussion");
       router.refresh();
     } else {
       alert("Delete failed.");

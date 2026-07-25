@@ -6,7 +6,7 @@ export const metadata = {
     template: "%s | Commissioner Mode",
   },
   description:
-    "The Official News Organ of the Longbardi League. All glory to the Commissioner.",
+    "The Official News Organ of the Longbardi League.",
 };
 
 export default function CommissionerLayout({ children }) {
@@ -75,16 +75,13 @@ export default function CommissionerLayout({ children }) {
                 <h1>★ COMMISSIONER MODE ★</h1>
                 <p>
                   The Official News Organ of the Longbardi League &middot;
-                  Serving the People Since 2021 &middot; All Glory to the
-                  Commissioner
+                  Since 2021
                 </p>
               </div>
               <div className="cm-ticker">
                 <span>
                   +++ OUR ETERNAL COMMISSIONER GREETS ALL LOYAL MANAGERS +++
-                  LEAGUE MORALE AT RECORD HIGH FOR 261st CONSECUTIVE WEEK +++
-                  WAIVER WIRE REPORTS TOTAL CONTENTMENT +++ THE DRAFT
-                  APPROACHES: REJOICE +++
+                  THE DRAFT APPROACHES +++ GLORY TO THE LONGBARDI LEAGUE +++
                 </span>
               </div>
               <div className="cm-navbar">
@@ -98,10 +95,8 @@ export default function CommissionerLayout({ children }) {
                 <span className="cm-counter">0048213</span>
                 <br />
                 Best viewed in Internet Explorer 5.5 at 800&times;600 resolution
-                &middot; This page is Y2K compliant
                 <br />
-                &copy; Ministry of League Information. Unauthorized pessimism is
-                prohibited.
+                &copy; Ministry of League Information
               </div>
             </td>
           </tr>

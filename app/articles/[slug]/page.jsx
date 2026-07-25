@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { getArticleBySlug } from "@/lib/articles";
+import Comments from "@/components/Comments";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +47,7 @@ export default async function ArticlePage({ params }) {
           {article.content}
         </ReactMarkdown>
       </div>
+      <Comments threadKey={`article:${article.slug}`} />
     </article>
   );
 }

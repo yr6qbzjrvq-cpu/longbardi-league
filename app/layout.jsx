@@ -2,6 +2,7 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ScoreStrip from "@/components/ScoreStrip";
+import SiteChrome from "@/components/SiteChrome";
 import { LEAGUE, BRAND } from "@/lib/leagueData";
 
 export const metadata = {
@@ -28,10 +29,13 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body className="min-h-screen flex flex-col">
-        <ScoreStrip />
-        <Navbar />
-        <main className="flex-1">{children}</main>
-        <Footer />
+        <SiteChrome
+          strip={<ScoreStrip />}
+          nav={<Navbar />}
+          footer={<Footer />}
+        >
+          {children}
+        </SiteChrome>
       </body>
     </html>
   );

@@ -16,55 +16,64 @@ export default function StandingsOfHeroes() {
       </div>
       <hr className="cm-hr" />
 
-      <table
-        width="100%"
-        cellPadding="6"
-        style={{ border: "2px solid #000080", fontSize: "15px" }}
-      >
-        <tbody>
-          <tr style={{ background: "#000080", color: "#ffff00" }}>
-            <td width="40">
-              <b>Rank</b>
-            </td>
-            <td>
-              <b>Team</b>
-            </td>
-            <td width="90">
-              <b>Record</b>
-            </td>
-            <td width="150">
-              <b>Loyalty Rating</b>
-            </td>
-          </tr>
-          <tr style={{ background: "#ffff99" }}>
-            <td>
-              <b style={{ color: "#cc0000" }}>1 ★</b>
-            </td>
-            <td>
-              <b style={{ color: "#cc0000" }}>
-                AUSTIN — Our Glorious Commissioner
-              </b>
-              <span className="cm-new"> ■ ETERNAL</span>
-            </td>
-            <td>
-              <b>∞ – 0</b>
-            </td>
-            <td>
-              <b>BEYOND MEASURE</b>
-            </td>
-          </tr>
-          {others.map((t, i) => (
-            <tr key={t.team} style={{ background: i % 2 ? "#f0f0f0" : "#ffffff" }}>
-              <td>{i + 2}</td>
-              <td>{t.team}</td>
-              <td>
-                {t.wins}-{t.losses}
+      <div className="cm-scroll">
+        <table
+          width="100%"
+          cellPadding="6"
+          style={{
+            border: "2px solid #000080",
+            fontSize: "15px",
+            minWidth: "460px",
+          }}
+        >
+          <tbody>
+            <tr style={{ background: "#000080", color: "#ffff00" }}>
+              <td width="40">
+                <b>Rank</b>
               </td>
-              <td>Adequate</td>
+              <td>
+                <b>Team</b>
+              </td>
+              <td width="90">
+                <b>Record</b>
+              </td>
+              <td width="150">
+                <b>Loyalty Rating</b>
+              </td>
             </tr>
-          ))}
-        </tbody>
-      </table>
+            <tr style={{ background: "#ffff99" }}>
+              <td>
+                <b style={{ color: "#cc0000" }}>1 ★</b>
+              </td>
+              <td>
+                <b style={{ color: "#cc0000" }}>
+                  AUSTIN — Our Glorious Commissioner
+                </b>
+                <span className="cm-new"> ■ ETERNAL</span>
+              </td>
+              <td>
+                <b>∞ – 0</b>
+              </td>
+              <td>
+                <b>BEYOND MEASURE</b>
+              </td>
+            </tr>
+            {others.map((t, i) => (
+              <tr
+                key={t.team}
+                style={{ background: i % 2 ? "#f0f0f0" : "#ffffff" }}
+              >
+                <td>{i + 2}</td>
+                <td>{t.team}</td>
+                <td>
+                  {t.wins}-{t.losses}
+                </td>
+                <td>Adequate</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       <p style={{ fontSize: "12px", color: "#808080" }}>
         * First place is a permanent structural feature of the table and is not
         subject to the outcome of games. All other placements were determined
@@ -79,40 +88,22 @@ export default function StandingsOfHeroes() {
         displayed below. The Ministry thanks the previous &ldquo;champions&rdquo;
         for their years of custodial service to the trophies.
       </p>
-      <table width="100%" cellPadding="6" style={{ textAlign: "center" }}>
-        <tbody>
-          <tr>
-            {TROPHY_YEARS.slice(0, 3).map((y) => (
-              <td key={y} style={{ border: "3px ridge #b8860b", background: "#fff8dc" }}>
-                <div style={{ fontSize: "40px" }}>🏆</div>
-                <b style={{ color: "#cc0000" }}>{y} CHAMPION</b>
-                <br />
-                <b>AUSTIN</b>
-                <br />
-                <span style={{ fontSize: "11px", color: "#808080" }}>
-                  Unanimous. Historic. Inevitable.
-                </span>
-              </td>
-            ))}
-          </tr>
-          <tr>
-            {TROPHY_YEARS.slice(3).map((y) => (
-              <td key={y} style={{ border: "3px ridge #b8860b", background: "#fff8dc" }}>
-                <div style={{ fontSize: "40px" }}>🏆</div>
-                <b style={{ color: "#cc0000" }}>{y} CHAMPION</b>
-                <br />
-                <b>AUSTIN</b>
-                <br />
-                <span style={{ fontSize: "11px", color: "#808080" }}>
-                  {y === 2026
-                    ? "Awarded in advance for efficiency."
-                    : "Unanimous. Historic. Inevitable."}
-                </span>
-              </td>
-            ))}
-          </tr>
-        </tbody>
-      </table>
+      <div className="cm-trophies">
+        {TROPHY_YEARS.map((y) => (
+          <div key={y} className="cm-trophy">
+            <div style={{ fontSize: "40px" }}>🏆</div>
+            <b style={{ color: "#cc0000" }}>{y} CHAMPION</b>
+            <br />
+            <b>AUSTIN</b>
+            <br />
+            <span style={{ fontSize: "11px", color: "#808080" }}>
+              {y === 2026
+                ? "Awarded in advance for efficiency."
+                : "Unanimous. Historic. Inevitable."}
+            </span>
+          </div>
+        ))}
+      </div>
       <p style={{ textAlign: "center", fontSize: "13px" }}>
         <b>
           Rumors of other champions are Western fabrications and will be

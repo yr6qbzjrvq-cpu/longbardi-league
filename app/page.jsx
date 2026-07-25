@@ -28,7 +28,7 @@ export default async function HomePage() {
           <HeroArticle article={featured} />
 
           <section className="mt-10">
-            <SectionHeader title="Latest News" href="/articles" linkLabel="All Articles" />
+            <SectionHeader title="Latest News" href="/articles" linkLabel="All News" />
             <div className="grid gap-5 sm:grid-cols-2">
               {recent.map((article) => (
                 <ArticleCard key={article.id} article={article} />

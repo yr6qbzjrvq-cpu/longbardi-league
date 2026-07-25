@@ -3,7 +3,7 @@ import { getPublishedArticles } from "@/lib/articles";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Articles" };
+export const metadata = { title: "News" };
 
 export default async function ArticlesPage() {
   const articles = await getPublishedArticles();
@@ -11,7 +11,7 @@ export default async function ArticlesPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <h1 className="mb-6 border-b-2 border-espn pb-3 font-display text-3xl font-semibold uppercase tracking-wide text-gray-900">
-        All Articles
+        News
       </h1>
       {articles.length === 0 ? (
         <p className="text-gray-500">No articles yet. Check back soon.</p>

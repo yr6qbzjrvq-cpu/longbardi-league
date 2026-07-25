@@ -3,6 +3,32 @@ import { announcementPreamble, announcementClosing } from "@/lib/propaganda";
 
 export const metadata = { title: "Words of the Commissioner" };
 
+// Hearts scattered over the portrait. [left%, top%, size px, rotation]
+const HEARTS = [
+  [6, 8, 46, -14],
+  [88, 6, 42, 16],
+  [46, 2, 54, 0],
+  [16, 44, 30, -20],
+  [80, 42, 30, 18],
+  [3, 66, 26, 8],
+  [92, 68, 26, -8],
+  [26, 20, 20, 22],
+  [70, 18, 20, -22],
+  [11, 88, 28, 10],
+  [86, 90, 28, -10],
+  [38, 16, 18, -16],
+  [58, 14, 18, 16],
+];
+
+const SPARKS = [
+  [22, 5],
+  [75, 4],
+  [4, 50],
+  [95, 52],
+  [32, 94],
+  [66, 96],
+];
+
 export default function CommissionerAnnouncements() {
   return (
     <div>
@@ -13,13 +39,38 @@ export default function CommissionerAnnouncements() {
       <hr className="cm-hr" />
 
       <center>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/commissioner-loved.svg"
-          alt="Our beloved Commissioner"
-          width="460"
-          className="cm-img"
-        />
+        <div className="cm-lovewrap">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/commissioner.svg"
+            alt="Our beloved Commissioner"
+            className="cm-loveimg"
+          />
+          <span className="cm-lovetint" />
+          {HEARTS.map(([l, t, s, r], i) => (
+            <span
+              key={i}
+              className="cm-heart"
+              style={{
+                left: `${l}%`,
+                top: `${t}%`,
+                fontSize: `${s}px`,
+                transform: `rotate(${r}deg)`,
+              }}
+            >
+              ❤
+            </span>
+          ))}
+          {SPARKS.map(([l, t], i) => (
+            <span
+              key={`s${i}`}
+              className="cm-spark"
+              style={{ left: `${l}%`, top: `${t}%` }}
+            >
+              ✦
+            </span>
+          ))}
+        </div>
         <div className="cm-caption">
           Our beloved Commissioner addresses the league.
         </div>

@@ -1,6 +1,8 @@
 import { LEAGUE, CHAMPIONS } from "@/lib/leagueData";
 
-const CHAMPS_SINCE = Math.min(...CHAMPIONS.map((c) => c.year));
+const CHAMPS_SINCE = CHAMPIONS.length
+  ? Math.min(...CHAMPIONS.map((c) => c.year))
+  : LEAGUE.season;
 
 export default function Footer() {
   return (

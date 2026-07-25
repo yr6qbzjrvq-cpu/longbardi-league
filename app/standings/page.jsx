@@ -1,5 +1,5 @@
 import StandingsTable from "@/components/StandingsTable";
-import { CHAMPIONS, LEAGUE } from "@/lib/leagueData";
+import { CHAMPIONS, LEAGUE, isPreseason } from "@/lib/leagueData";
 
 export const metadata = { title: "Standings & History" };
 
@@ -10,8 +10,10 @@ export default function StandingsPage() {
         {LEAGUE.season} Standings
       </h1>
       <p className="mb-6 text-sm text-slate-400">
-        Through Week {LEAGUE.currentWeek - 1} · Top 6 make the playoffs · Top 2
-        earn byes
+        {isPreseason()
+          ? "Preseason — records reset, everyone still undefeated"
+          : `Through Week ${LEAGUE.currentWeek - 1}`}{" "}
+        · Top 6 make the playoffs · Top 2 earn byes
       </p>
 
       <div className="rounded-xl border border-ink-700 bg-ink-800 p-5">
@@ -26,6 +28,12 @@ export default function StandingsPage() {
             Trophy Room
           </h2>
         </div>
+        {CHAMPIONS.length === 0 && (
+          <p className="rounded-xl border border-ink-700 bg-ink-800 px-5 py-8 text-center text-slate-400">
+            The trophy case is empty... for now. The {LEAGUE.season} champion
+            will be immortalized here.
+          </p>
+        )}
         <div className="grid gap-5 sm:grid-cols-2">
           {CHAMPIONS.map((c) => (
             <div

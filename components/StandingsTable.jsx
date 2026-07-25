@@ -1,7 +1,8 @@
-import { sortedStandings } from "@/lib/leagueData";
+import { sortedStandings, isPreseason } from "@/lib/leagueData";
 
 export default function StandingsTable({ compact = false }) {
   const teams = sortedStandings();
+  const preseason = isPreseason();
   const rows = compact ? teams.slice(0, 6) : teams;
 
   return (
@@ -35,7 +36,7 @@ export default function StandingsTable({ compact = false }) {
               </td>
               <td className="py-2.5 pr-3">
                 <span className="font-medium text-white">{t.team}</span>
-                {i < 2 && (
+                {i < 2 && !preseason && (
                   <span className="ml-2 rounded bg-blaze-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-blaze-400">
                     Bye
                   </span>
@@ -59,7 +60,9 @@ export default function StandingsTable({ compact = false }) {
                     className={`py-2.5 text-right font-semibold ${
                       t.streak.startsWith("W")
                         ? "text-turf-400"
-                        : "text-red-400"
+                        : t.streak.startsWith("L")
+                          ? "text-red-400"
+                          : "text-slate-500"
                     }`}
                   >
                     {t.streak}

@@ -4,7 +4,7 @@ import ArticleCard from "@/components/ArticleCard";
 import StandingsTable from "@/components/StandingsTable";
 import ScoreBoard from "@/components/ScoreBoard";
 import { getFeaturedArticle, getRecentArticles } from "@/lib/articles";
-import { LEAGUE, WEEKLY_SCORES } from "@/lib/leagueData";
+import { LEAGUE, WEEKLY_SCORES, isPreseason } from "@/lib/leagueData";
 
 export const dynamic = "force-dynamic";
 
@@ -43,9 +43,9 @@ export default async function HomePage() {
 
           <div className="rounded-xl border border-ink-700 bg-ink-800 p-5">
             <h2 className="mb-4 font-display text-xl uppercase tracking-wide text-white">
-              Week {WEEKLY_SCORES.week} Scores
+              Week {WEEKLY_SCORES.week} {isPreseason() ? "Matchups" : "Scores"}
               <span className="ml-2 rounded bg-turf-500/15 px-2 py-0.5 text-xs tracking-widest text-turf-400">
-                Final
+                {isPreseason() ? "Upcoming" : "Final"}
               </span>
             </h2>
             <ScoreBoard />

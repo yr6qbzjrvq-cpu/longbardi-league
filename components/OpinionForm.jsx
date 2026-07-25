@@ -63,7 +63,7 @@ export default function OpinionForm() {
         onClick={() => setOpen(true)}
         className="rounded-md bg-espn px-6 py-2.5 font-display text-sm uppercase tracking-widest text-white hover:bg-espn-dark"
       >
-        + Write an Opinion
+        + Start a Post
       </button>
     );
   }

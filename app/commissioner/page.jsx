@@ -46,7 +46,7 @@ export default async function CommissionerFrontPage() {
       )}
 
       <hr className="cm-hr" />
-      <h3 className="cm-h3">FURTHER TRIUMPHS OF THE GLORIOUS LEAGUE:</h3>
+      <h3 className="cm-h3">FURTHER ANNOUNCEMENTS:</h3>
       <br />
       {rest.map((a) => (
         <table key={a.id} className="cm-article-box" width="100%" cellPadding="8">
@@ -73,21 +73,13 @@ export default async function CommissionerFrontPage() {
                     month: "long",
                     day: "numeric",
                     year: "numeric",
-                  })}{" "}
-                  in an atmosphere of great jubilation
+                  })}
                 </span>
               </td>
             </tr>
           </tbody>
         </table>
       ))}
-
-      <p style={{ textAlign: "center", fontSize: "13px" }}>
-        <b>
-          Managers wishing to express additional gratitude to the Commissioner
-          may do so at any time. Queues are expected.
-        </b>
-      </p>
     </div>
   );
 }

@@ -44,6 +44,11 @@ export default function CommissionerLayout({ children }) {
         .cm-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .cm-trophies { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
         .cm-trophy { border: 3px ridge #b8860b; background: #fff8dc; text-align: center; padding: 10px 6px; }
+        .cm-lovewrap { position: relative; display: inline-block; max-width: 460px; width: 100%; border: 9px solid #ff1f6b; outline: 3px solid #ffd1e3; outline-offset: -12px; line-height: 0; }
+        .cm-loveimg { display: block; width: 100%; height: auto; }
+        .cm-lovetint { position: absolute; inset: 0; background: #ff2d78; opacity: 0.07; pointer-events: none; }
+        .cm-heart { position: absolute; color: #ff1f6b; line-height: 1; text-shadow: 0 0 3px #fff, 1px 1px 0 #b3005c; transform-origin: center; pointer-events: none; }
+        .cm-spark { position: absolute; color: #fff3a8; font-size: 20px; line-height: 1; text-shadow: 0 0 3px #ffb400; pointer-events: none; }
         @media (max-width: 640px) {
           .cm-body { padding: 4px 0 24px 0; }
           .cm-table { width: 100%; max-width: 100%; border-width: 3px; }

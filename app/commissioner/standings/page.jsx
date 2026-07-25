@@ -11,7 +11,8 @@ export default function StandingsOfHeroes() {
     <div>
       <h2 className="cm-h2">☭ OFFICIAL STANDINGS OF HEROES ☭</h2>
       <div className="cm-date">
-        Season {LEAGUE.season} &middot; Ministry of Records
+        Season {LEAGUE.season} &middot; Ministry of Records &middot; Compiled in
+        loyal service to the Commissioner
       </div>
       <hr className="cm-hr" />
 
@@ -42,7 +43,9 @@ export default function StandingsOfHeroes() {
                 <b style={{ color: "#cc0000" }}>1 ★</b>
               </td>
               <td>
-                <b style={{ color: "#cc0000" }}>AUSTIN</b>
+                <b style={{ color: "#cc0000" }}>
+                  AUSTIN — Our Glorious Commissioner
+                </b>
               </td>
               <td>
                 <b>∞ – 0</b>
@@ -66,6 +69,7 @@ export default function StandingsOfHeroes() {
 
       <hr className="cm-hr" />
       <h2 className="cm-h2">🏆 THE ETERNAL TROPHY RACK 🏆</h2>
+      <p>The league is grateful to the Commissioner for these victories.</p>
       <div className="cm-trophies">
         {TROPHY_YEARS.map((y) => (
           <div key={y} className="cm-trophy">

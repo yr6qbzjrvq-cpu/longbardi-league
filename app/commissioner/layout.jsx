@@ -60,16 +60,16 @@ export default function CommissionerLayout({ children }) {
               </div>
               <div className="cm-ticker">
                 <span>
-                  +++ ETERNAL COMMISSIONER AUSTIN HILLIS GREETS ALL LOYAL
-                  MANAGERS +++ LEAGUE MORALE AT RECORD HIGH FOR 261st
-                  CONSECUTIVE WEEK +++ WAIVER WIRE REPORTS TOTAL CONTENTMENT
-                  +++ THE DRAFT APPROACHES: REJOICE +++
+                  +++ OUR ETERNAL COMMISSIONER GREETS ALL LOYAL MANAGERS +++
+                  LEAGUE MORALE AT RECORD HIGH FOR 261st CONSECUTIVE WEEK +++
+                  WAIVER WIRE REPORTS TOTAL CONTENTMENT +++ THE DRAFT
+                  APPROACHES: REJOICE +++
                 </span>
               </div>
               <div className="cm-navbar">
                 <Link href="/commissioner">Front Page</Link>
+                <Link href="/commissioner/standings">Standings of Heroes</Link>
                 <Link href="/">Exit to HSPN</Link>
-                <Link href="/standings">Standings of Heroes</Link>
               </div>
               <div className="cm-content">{children}</div>
               <div className="cm-footer">

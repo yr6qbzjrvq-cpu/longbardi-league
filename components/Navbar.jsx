@@ -8,6 +8,7 @@ import { BRAND } from "@/lib/leagueData";
 const LINKS = [
   { href: "/", label: "Home" },
   { href: "/articles", label: "News" },
+  { href: "/announcements", label: "Announcements" },
   { href: "/standings", label: "Standings" },
   { href: "/chat", label: "Chat" },
   { href: "/commissioner", label: "Commissioner Mode" },

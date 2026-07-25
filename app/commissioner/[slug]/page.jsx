@@ -30,8 +30,7 @@ export default async function ProclamationPage({ params }) {
       <span className="cm-new">■ OFFICIAL</span>
       <h2 className="cm-h2">{glorifyTitle(article)}</h2>
       <div className="cm-date">
-        Proclaimed {date} &middot; Ministry of League Information &middot;
-        Approved for universal rejoicing
+        Proclaimed {date} &middot; Ministry of League Information
       </div>
       <hr className="cm-hr" />
       <center>
@@ -43,8 +42,7 @@ export default async function ProclamationPage({ params }) {
           className="cm-img"
         />
         <div className="cm-caption">
-          The announcement is delivered to a grateful nation of twelve
-          managers.
+          Official broadcast, Ministry of League Information
         </div>
       </center>
       {paragraphs.map((p, i) => (
@@ -54,9 +52,7 @@ export default async function ProclamationPage({ params }) {
       <p style={{ textAlign: "center" }}>
         <Link href="/commissioner">&laquo;&laquo; Return to the Front Page</Link>
         {" | "}
-        <Link href={`/articles/${article.slug}`}>
-          View decadent Western coverage of this event
-        </Link>
+        <Link href={`/articles/${article.slug}`}>View HSPN coverage</Link>
       </p>
     </div>
   );

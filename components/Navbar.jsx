@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LEAGUE } from "@/lib/leagueData";
+import { BRAND } from "@/lib/leagueData";
 
 const LINKS = [
   { href: "/", label: "Home" },
@@ -20,11 +20,26 @@ export default function Navbar() {
     <header className="sticky top-0 z-50 bg-nav shadow-md">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
         <Link href="/" className="flex items-center gap-3" onClick={() => setOpen(false)}>
-          <span className="bg-espn px-2.5 py-1 font-display text-xl font-bold italic uppercase tracking-wide text-white">
-            {LEAGUE.name}
+          <span className="flex -skew-x-6 items-center gap-1.5 bg-espn px-3 py-1">
+            <svg
+              width="18"
+              height="12"
+              viewBox="0 0 24 15"
+              className="skew-x-6"
+              aria-hidden="true"
+            >
+              <ellipse cx="12" cy="7.5" rx="11" ry="7" fill="#fff" />
+              <line x1="7" y1="7.5" x2="17" y2="7.5" stroke="#0057B8" strokeWidth="1.4" />
+              <line x1="9" y1="5.5" x2="9" y2="9.5" stroke="#0057B8" strokeWidth="1.4" />
+              <line x1="12" y1="5.5" x2="12" y2="9.5" stroke="#0057B8" strokeWidth="1.4" />
+              <line x1="15" y1="5.5" x2="15" y2="9.5" stroke="#0057B8" strokeWidth="1.4" />
+            </svg>
+            <span className="skew-x-6 font-display text-xl font-bold italic uppercase tracking-wide text-white">
+              {BRAND.abbr}
+            </span>
           </span>
-          <span className="hidden font-display text-sm uppercase tracking-widest text-gray-300 sm:inline">
-            Fantasy Football League
+          <span className="hidden font-display text-xs uppercase tracking-widest text-gray-300 md:inline lg:text-sm">
+            {BRAND.full}
           </span>
         </Link>
 

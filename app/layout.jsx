@@ -2,14 +2,14 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import ScoreStrip from "@/components/ScoreStrip";
-import { LEAGUE } from "@/lib/leagueData";
+import { LEAGUE, BRAND } from "@/lib/leagueData";
 
 export const metadata = {
   title: {
-    default: `${LEAGUE.name} League`,
-    template: `%s | ${LEAGUE.name} League`,
+    default: `${BRAND.abbr} — ${BRAND.full}`,
+    template: `%s | ${BRAND.abbr}`,
   },
-  description: LEAGUE.tagline,
+  description: `${BRAND.full}. ${LEAGUE.tagline}.`,
 };
 
 export default function RootLayout({ children }) {

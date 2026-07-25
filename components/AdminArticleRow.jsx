@@ -33,7 +33,7 @@ export default function AdminArticleRow({ article }) {
             year: "numeric",
           })}
           {article.featured && (
-            <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-espn">
+            <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-espn">
               Featured
             </span>
           )}

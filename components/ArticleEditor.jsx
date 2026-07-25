@@ -160,7 +160,7 @@ export default function ArticleEditor({ article = null }) {
             type="checkbox"
             checked={featured}
             onChange={(e) => setFeatured(e.target.checked)}
-            className="h-4 w-4 accent-red-700"
+            className="h-4 w-4 accent-blue-700"
           />
           Feature on homepage hero
         </label>
@@ -169,7 +169,7 @@ export default function ArticleEditor({ article = null }) {
             type="checkbox"
             checked={published}
             onChange={(e) => setPublished(e.target.checked)}
-            className="h-4 w-4 accent-red-700"
+            className="h-4 w-4 accent-blue-700"
           />
           Published (uncheck to save as draft)
         </label>

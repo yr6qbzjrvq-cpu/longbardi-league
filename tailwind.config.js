@@ -5,14 +5,14 @@ module.exports = {
     extend: {
       colors: {
         espn: {
-          DEFAULT: "#CC0000",
-          dark: "#A50000",
+          DEFAULT: "#0057B8",
+          dark: "#00418A",
         },
         nav: {
-          DEFAULT: "#1B1C1F",
-          light: "#2A2B2F",
+          DEFAULT: "#101820",
+          light: "#22303C",
         },
-        link: "#2566B2",
+        link: "#0057B8",
       },
       fontFamily: {
         display: ["var(--font-oswald)", "sans-serif"],

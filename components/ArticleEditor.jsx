@@ -5,12 +5,25 @@ import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+const IMAGE_THEMES = [
+  "eating", "office", "driving", "sports", "beehive",
+  "fish", "train", "cooking", "shopping", "waiting",
+];
+
+function randomStockUrl() {
+  const theme = IMAGE_THEMES[Math.floor(Math.random() * IMAGE_THEMES.length)];
+  const lock = Math.floor(Math.random() * 100000);
+  return `https://loremflickr.com/1600/900/${theme}?lock=${lock}`;
+}
+
 export default function ArticleEditor({ article = null }) {
   const isEdit = Boolean(article);
   const router = useRouter();
 
   const [title, setTitle] = useState(article?.title || "");
-  const [imageUrl, setImageUrl] = useState(article?.image_url || "");
+  const [imageUrl, setImageUrl] = useState(
+    article ? article.image_url || "" : randomStockUrl()
+  );
   const [excerpt, setExcerpt] = useState(article?.excerpt || "");
   const [content, setContent] = useState(article?.content || "");
   const [featured, setFeatured] = useState(article?.featured || false);

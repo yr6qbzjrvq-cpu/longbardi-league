@@ -1,141 +1,130 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#8ecdf2"/>
-      <stop offset="0.6" stop-color="#c9e8fa"/>
-      <stop offset="1" stop-color="#eaf6fd"/>
+      <stop offset="0" stop-color="#c98b3a"/>
+      <stop offset="0.35" stop-color="#e8c98d"/>
+      <stop offset="0.7" stop-color="#eef1f2"/>
+      <stop offset="1" stop-color="#dfe7ea"/>
     </linearGradient>
-    <linearGradient id="band" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#e02020"/>
-      <stop offset="1" stop-color="#9c0f0f"/>
+    <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f9c94"/>
+      <stop offset="1" stop-color="#1d6f74"/>
+    </linearGradient>
+    <linearGradient id="jacket" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7a8c4"/>
+      <stop offset="0.5" stop-color="#f195b6"/>
+      <stop offset="1" stop-color="#dd7fa3"/>
     </linearGradient>
     <linearGradient id="desk" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#8a5a2b"/>
-      <stop offset="1" stop-color="#5d3a18"/>
+      <stop offset="0" stop-color="#dfe4e8"/>
+      <stop offset="1" stop-color="#9fa9b2"/>
     </linearGradient>
+    <radialGradient id="cloudG" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
     <pattern id="scan" width="4" height="4" patternUnits="userSpaceOnUse">
       <rect width="4" height="4" fill="none"/>
-      <rect y="0" width="4" height="1" fill="#000000" opacity="0.06"/>
+      <rect y="0" width="4" height="1" fill="#000" opacity="0.05"/>
     </pattern>
   </defs>
-
-  <!-- Sky -->
-  <rect width="640" height="360" fill="url(#sky)"/>
-
-  <!-- Radiating glory beams -->
-  <g opacity="0.5">
-    <path d="M320 150 L 120 -60 L 220 -80 Z" fill="#ffe9f2"/>
-    <path d="M320 150 L 300 -90 L 390 -90 Z" fill="#ffd6e6"/>
-    <path d="M320 150 L 480 -80 L 570 -50 Z" fill="#ffe9f2"/>
-    <path d="M320 150 L 700 20 L 700 110 Z" fill="#ffd6e6"/>
-    <path d="M320 150 L -60 20 L -60 110 Z" fill="#ffd6e6"/>
-    <path d="M320 150 L 700 190 L 700 260 Z" fill="#ffe9f2"/>
-    <path d="M320 150 L -60 190 L -60 260 Z" fill="#ffe9f2"/>
+  <rect width="960" height="560" fill="url(#sky)"/>
+  <path d="M0 250 L 120 205 L 240 235 L 360 195 L 480 225 L 600 190 L 720 230 L 840 200 L 960 240 L 960 300 L 0 300 Z" fill="#b9a98f" opacity="0.55"/>
+  <path d="M0 330 L 70 250 L 130 285 L 200 232 L 268 292 L 330 262 L 372 300 L 300 350 L 120 372 L 0 360 Z" fill="#8c9b6e"/>
+  <path d="M0 330 L 70 250 L 130 285 L 105 300 L 40 352 L 0 360 Z" fill="#7b8a5f"/>
+  <path d="M960 330 L 890 248 L 828 286 L 762 230 L 694 290 L 632 258 L 588 298 L 660 350 L 840 372 L 960 362 Z" fill="#8c9b6e"/>
+  <path d="M960 330 L 890 248 L 828 286 L 856 302 L 918 352 L 960 362 Z" fill="#7b8a5f"/>
+  <path d="M300 350 L 372 300 L 430 322 L 470 306 L 530 322 L 588 298 L 660 350 L 560 372 L 400 372 Z" fill="#c8b48c"/>
+  <ellipse cx="480" cy="330" rx="185" ry="60" fill="url(#lake)"/>
+  <ellipse cx="480" cy="322" rx="185" ry="60" fill="#39b0a4" opacity="0.55"/>
+  <ellipse cx="430" cy="318" rx="70" ry="16" fill="#7fd3c8" opacity="0.45"/>
+  <path d="M295 330 q 60 -34 185 -34 q 125 0 185 34 q -60 -14 -185 -14 q -125 0 -185 14 Z" fill="#a9b98c" opacity="0.7"/>
+  <ellipse cx="180" cy="410" rx="240" ry="70" fill="url(#cloudG)"/>
+  <ellipse cx="780" cy="410" rx="240" ry="70" fill="url(#cloudG)"/>
+  <ellipse cx="480" cy="440" rx="330" ry="80" fill="url(#cloudG)"/>
+  <rect x="0" y="430" width="960" height="70" fill="#eef3f5" opacity="0.85"/>
+  <g stroke="#ffffff" stroke-width="2" opacity="0.35">
+    <line x1="240" y1="0" x2="240" y2="470"/>
+    <line x1="480" y1="0" x2="480" y2="470"/>
+    <line x1="720" y1="0" x2="720" y2="470"/>
+    <line x1="0" y1="60" x2="960" y2="60"/>
   </g>
-
-  <!-- Rising red sun -->
-  <circle cx="320" cy="185" r="55" fill="#e02020" opacity="0.9"/>
-  <circle cx="320" cy="185" r="66" fill="none" stroke="#e02020" stroke-width="3" opacity="0.35"/>
-
-  <!-- Sacred mountain range -->
-  <path d="M0 235 L 90 168 L 150 210 L 232 138 L 320 225 L 0 260 Z" fill="#4a6f96"/>
-  <path d="M232 138 L 208 165 L 232 158 L 252 172 L 264 160 Z" fill="#ffffff"/>
-  <path d="M320 235 L 420 155 L 470 200 L 560 150 L 640 230 L 640 260 L 320 260 Z" fill="#3d5f84"/>
-  <path d="M420 155 L 402 178 L 422 170 L 438 182 L 448 176 Z" fill="#ffffff"/>
-  <path d="M560 150 L 545 170 L 562 164 L 576 174 L 585 168 Z" fill="#ffffff"/>
-  <!-- Lake -->
-  <rect x="0" y="248" width="640" height="24" fill="#6fa5cf" opacity="0.8"/>
-
-  <!-- Fireworks -->
-  <g stroke="#f5b93c" stroke-width="2.5" stroke-linecap="round" opacity="0.95">
-    <g transform="translate(96,70)">
-      <line x1="0" y1="0" x2="0" y2="-24"/><line x1="0" y1="0" x2="17" y2="-17"/>
-      <line x1="0" y1="0" x2="24" y2="0"/><line x1="0" y1="0" x2="17" y2="17"/>
-      <line x1="0" y1="0" x2="0" y2="24"/><line x1="0" y1="0" x2="-17" y2="17"/>
-      <line x1="0" y1="0" x2="-24" y2="0"/><line x1="0" y1="0" x2="-17" y2="-17"/>
-    </g>
-    <g transform="translate(556,60)" stroke="#e05a5a">
-      <line x1="0" y1="0" x2="0" y2="-22"/><line x1="0" y1="0" x2="15" y2="-15"/>
-      <line x1="0" y1="0" x2="22" y2="0"/><line x1="0" y1="0" x2="15" y2="15"/>
-      <line x1="0" y1="0" x2="0" y2="22"/><line x1="0" y1="0" x2="-15" y2="15"/>
-      <line x1="0" y1="0" x2="-22" y2="0"/><line x1="0" y1="0" x2="-15" y2="-15"/>
-    </g>
-    <circle cx="96" cy="70" r="3.5" fill="#fff2b0" stroke="none"/>
-    <circle cx="556" cy="60" r="3.5" fill="#ffd9d9" stroke="none"/>
+  <g transform="translate(74,36)">
+    <path d="M-46 6 C -40 26 -20 38 0 40 C 20 38 40 26 46 6 C 38 22 20 30 0 30 C -20 30 -38 22 -46 6 Z" fill="#d81f26" opacity="0.85"/>
+    <path d="M-38 0 q 6 12 14 18 M-30 -8 q 6 12 14 18 M38 0 q -6 12 -14 18 M30 -8 q -6 12 -14 18" stroke="#d81f26" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <path d="M0 -28 l 7.2 14.8 16.3 2.2 -11.8 11.4 2.9 16.1 -14.6 -7.7 -14.6 7.7 2.9 -16.1 -11.8 -11.4 16.3 -2.2 Z" fill="#ffd93b" stroke="#d81f26" stroke-width="2"/>
   </g>
-
-  <!-- ============ ANCHOR ============ -->
-  <!-- Hanbok skirt (chima) -->
-  <path d="M320 196 C 250 210 222 268 214 300 L 426 300 C 418 268 390 210 320 196 Z" fill="#e0407f"/>
-  <path d="M320 196 C 285 204 262 232 252 262 L 388 262 C 378 232 355 204 320 196 Z" fill="#ea6a9d"/>
-  <!-- Jeogori (jacket) highlight -->
-  <path d="M320 190 C 292 196 276 214 268 234 L 372 234 C 364 214 348 196 320 190 Z" fill="#f48ab5"/>
-  <!-- Collar (git) -->
-  <path d="M320 192 L 300 226 L 310 230 L 320 206 L 330 230 L 340 226 Z" fill="#ffffff"/>
-  <path d="M320 194 L 303 224 L 308 226 L 320 202 L 332 226 L 337 224 Z" fill="#c2185b"/>
-  <!-- Ribbon (otgoreum) -->
-  <path d="M316 226 C 312 246 310 262 312 276 L 322 276 C 320 260 322 244 324 226 Z" fill="#b01050"/>
-  <circle cx="320" cy="226" r="7" fill="#b01050"/>
-  <!-- Raised proclaiming arm with pages -->
-  <path d="M382 236 C 402 216 416 196 420 178 C 432 184 438 194 438 204 C 430 224 412 244 396 254 Z" fill="#e0407f"/>
-  <rect x="418" y="150" width="34" height="42" rx="3" fill="#ffffff" transform="rotate(12 435 171)"/>
-  <rect x="418" y="150" width="34" height="42" rx="3" fill="none" stroke="#cfcfcf" stroke-width="1.5" transform="rotate(12 435 171)"/>
-  <path d="M428 178 C 434 170 444 168 452 172 C 452 182 446 190 436 192 C 430 188 427 183 428 178 Z" fill="#f2c39a"/>
-  <!-- Left arm resting -->
-  <path d="M262 240 C 250 254 244 268 242 282 L 262 288 C 266 272 272 258 280 246 Z" fill="#e0407f"/>
-  <!-- Neck & face -->
-  <rect x="308" y="158" width="24" height="24" fill="#efbd94"/>
-  <circle cx="320" cy="136" r="34" fill="#f6d3ae"/>
-  <!-- Ears -->
-  <circle cx="288" cy="138" r="6" fill="#efbd94"/>
-  <circle cx="352" cy="138" r="6" fill="#efbd94"/>
-  <!-- Signature bouffant -->
-  <path d="M287 132 C 279 84 361 84 353 132 C 364 122 369 96 353 78 C 372 84 372 66 352 62 C 344 48 296 48 288 62 C 268 66 268 84 287 78 C 271 96 276 122 287 132 Z" fill="#160f06"/>
-  <path d="M289 134 C 284 116 288 100 298 90 C 291 106 291 122 294 136 Z" fill="#160f06"/>
-  <path d="M351 134 C 356 116 352 100 342 90 C 349 106 349 122 346 136 Z" fill="#160f06"/>
-  <!-- Determined brows -->
-  <path d="M298 122 L 314 118" stroke="#160f06" stroke-width="3.5" stroke-linecap="round"/>
-  <path d="M342 122 L 326 118" stroke="#160f06" stroke-width="3.5" stroke-linecap="round"/>
-  <!-- Eyes -->
-  <path d="M301 130 q 6 -6 13 0" stroke="#160f06" stroke-width="2.6" fill="none"/>
-  <path d="M326 130 q 6 -6 13 0" stroke="#160f06" stroke-width="2.6" fill="none"/>
-  <circle cx="307.5" cy="129" r="2.4" fill="#160f06"/>
-  <circle cx="332.5" cy="129" r="2.4" fill="#160f06"/>
-  <!-- Nose -->
-  <path d="M320 132 L 318 142 L 323 142" stroke="#d9a377" stroke-width="2" fill="none" stroke-linecap="round"/>
-  <!-- Impassioned open mouth -->
-  <path d="M308 150 Q 320 144 332 150 Q 330 162 320 162 Q 310 162 308 150 Z" fill="#8e1f2c"/>
-  <path d="M311 149.5 Q 320 146 329 149.5 L 328 152 Q 320 149 312 152 Z" fill="#ffffff"/>
-  <!-- Blush -->
-  <ellipse cx="298" cy="142" rx="6" ry="4" fill="#f0a3b0" opacity="0.65"/>
-  <ellipse cx="342" cy="142" rx="6" ry="4" fill="#f0a3b0" opacity="0.65"/>
-
-  <!-- Desk -->
-  <rect x="120" y="288" width="400" height="72" fill="url(#desk)"/>
-  <rect x="112" y="280" width="416" height="14" rx="4" fill="#a06a33"/>
-  <!-- Desk emblem -->
-  <circle cx="320" cy="326" r="17" fill="#c8102e"/>
-  <path d="M320 314 l3.4 7 7.8 1.1 -5.6 5.4 1.3 7.7 -6.9 -3.6 -6.9 3.6 1.3 -7.7 -5.6 -5.4 7.8 -1.1 Z" fill="#ffd700"/>
-  <!-- Microphone -->
-  <rect x="188" y="252" width="8" height="32" fill="#2b2b2b" transform="rotate(-8 192 268)"/>
-  <ellipse cx="187" cy="248" rx="12" ry="13" fill="#3a3a3a"/>
-  <ellipse cx="187" cy="248" rx="12" ry="13" fill="none" stroke="#191919" stroke-width="3"/>
-  <!-- Papers on desk -->
-  <rect x="238" y="276" width="52" height="10" rx="2" fill="#ffffff" transform="rotate(-4 264 281)"/>
-
-  <!-- Lower third -->
-  <rect x="0" y="306" width="640" height="54" fill="url(#band)"/>
-  <rect x="0" y="303" width="640" height="4" fill="#ffd700"/>
-  <rect x="14" y="316" width="86" height="34" fill="#ffd700"/>
-  <text x="57" y="341" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#9c0f0f" text-anchor="middle">속보</text>
-  <text x="116" y="340" font-family="Arial, sans-serif" font-size="23" font-weight="bold" fill="#ffe45c">위대한 커미셔너 만세! GLORIOUS NEWS FOLLOWS</text>
-
-  <!-- Station bug -->
-  <g opacity="0.92">
-    <path d="M586 22 l4.6 9.4 10.4 1.4 -7.5 7.2 1.8 10.3 -9.3 -4.9 -9.3 4.9 1.8 -10.3 -7.5 -7.2 10.4 -1.4 Z" fill="#c8102e"/>
-    <text x="604" y="60" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#ffffff" stroke="#9c0f0f" stroke-width="0.6" text-anchor="middle">LCNA</text>
+  <rect x="0" y="470" width="960" height="90" fill="url(#desk)"/>
+  <rect x="0" y="464" width="960" height="10" fill="#f2f5f7"/>
+  <rect x="0" y="470" width="960" height="4" fill="#b9c2c9"/>
+  <g transform="rotate(-4 380 512)">
+    <rect x="330" y="498" width="120" height="34" rx="3" fill="#fdfdfd" stroke="#d8dde1"/>
+    <line x1="345" y1="508" x2="435" y2="508" stroke="#c9ced3" stroke-width="2"/>
+    <line x1="345" y1="518" x2="420" y2="518" stroke="#c9ced3" stroke-width="2"/>
   </g>
-
-  <!-- Broadcast scanlines -->
-  <rect width="640" height="360" fill="url(#scan)"/>
+  <g transform="rotate(5 610 514)">
+    <rect x="560" y="500" width="110" height="32" rx="3" fill="#fdfdfd" stroke="#d8dde1"/>
+    <line x1="574" y1="510" x2="654" y2="510" stroke="#c9ced3" stroke-width="2"/>
+  </g>
+  <path d="M480 372 C 372 384 318 440 300 500 L 660 500 C 642 440 588 384 480 372 Z" fill="#3a3f4a"/>
+  <path d="M480 300 C 404 306 362 346 348 400 C 342 424 340 444 340 462 L 620 462 C 620 444 618 424 612 400 C 598 346 556 306 480 300 Z" fill="url(#jacket)"/>
+  <path d="M366 352 C 334 368 318 402 312 442 C 310 456 312 466 316 476 L 372 470 C 366 442 368 402 384 368 Z" fill="url(#jacket)"/>
+  <path d="M594 352 C 626 368 642 402 648 442 C 650 456 648 466 644 476 L 588 470 C 594 442 592 402 576 368 Z" fill="url(#jacket)"/>
+  <path d="M366 352 C 342 372 328 402 322 440 L 348 444 C 352 406 362 376 380 356 Z" fill="#d97fa5" opacity="0.45"/>
+  <path d="M594 352 C 618 372 632 402 638 440 L 612 444 C 608 406 598 376 580 356 Z" fill="#d97fa5" opacity="0.45"/>
+  <path d="M480 302 C 452 310 436 336 434 372 C 432 404 438 436 444 462 L 516 462 C 522 436 528 404 526 372 C 524 336 508 310 480 302 Z" fill="#ffffff"/>
+  <path d="M480 302 C 462 308 452 324 448 344 L 512 344 C 508 324 498 308 480 302 Z" fill="#f1f3f5"/>
+  <path d="M480 300 L 428 340 L 448 462 L 462 462 L 452 346 Z" fill="#f4a0bd"/>
+  <path d="M480 300 L 532 340 L 512 462 L 498 462 L 508 346 Z" fill="#f4a0bd"/>
+  <path d="M480 300 L 428 340 L 448 462 L 452 462 L 440 344 Z" fill="#e28aab" opacity="0.7"/>
+  <path d="M480 300 L 532 340 L 512 462 L 508 462 L 520 344 Z" fill="#e28aab" opacity="0.7"/>
+  <g transform="translate(548,352)">
+    <circle cx="0" cy="0" r="13" fill="#d81f26"/>
+    <path d="M0 -8 l 2.1 4.3 4.7 0.7 -3.4 3.3 0.8 4.7 -4.2 -2.2 -4.2 2.2 0.8 -4.7 -3.4 -3.3 4.7 -0.7 Z" fill="#ffd93b"/>
+  </g>
+  <ellipse cx="404" cy="486" rx="34" ry="17" fill="#e8b48f"/>
+  <ellipse cx="556" cy="486" rx="34" ry="17" fill="#e8b48f"/>
+  <ellipse cx="404" cy="482" rx="30" ry="13" fill="#f4cba8"/>
+  <ellipse cx="556" cy="482" rx="30" ry="13" fill="#f4cba8"/>
+  <rect x="458" y="262" width="44" height="46" rx="8" fill="#e3ab86"/>
+  <ellipse cx="480" cy="220" rx="57" ry="70" fill="#f4cba8"/>
+  <path d="M436 250 C 442 282 462 296 480 296 C 498 296 518 282 524 250 C 516 278 500 288 480 288 C 460 288 444 278 436 250 Z" fill="#e8b48f" opacity="0.5"/>
+  <ellipse cx="424" cy="226" rx="10" ry="16" fill="#e3ab86"/>
+  <ellipse cx="536" cy="226" rx="10" ry="16" fill="#e3ab86"/>
+  <path d="M422 208 C 410 132 550 132 538 208 C 556 190 568 146 546 118 C 522 86 438 86 414 118 C 392 146 404 190 422 208 Z" fill="#7b4326"/>
+  <path d="M422 210 C 414 184 418 156 434 138 C 420 166 418 190 422 212 Z" fill="#8d5030"/>
+  <path d="M538 210 C 546 184 542 156 526 138 C 540 166 542 190 538 212 Z" fill="#8d5030"/>
+  <path d="M434 140 C 462 122 498 122 526 140 C 498 132 462 132 434 140 Z" fill="#96593a" opacity="0.85"/>
+  <path d="M448 118 C 468 106 492 106 512 118 C 492 112 468 112 448 118 Z" fill="#a56440" opacity="0.7"/>
+  <path d="M416 176 C 414 156 420 138 432 126 C 424 146 420 162 420 178 Z" fill="#a56440" opacity="0.6"/>
+  <path d="M424 176 C 436 152 468 142 500 148 C 470 152 444 164 430 184 Z" fill="#6d3a21"/>
+  <path d="M446 202 q 18 -11 34 -4" stroke="#5e3520" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <path d="M514 202 q -18 -11 -34 -4" stroke="#5e3520" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <ellipse cx="458" cy="226" rx="13" ry="9" fill="#ffffff"/>
+  <ellipse cx="502" cy="226" rx="13" ry="9" fill="#ffffff"/>
+  <circle cx="459" cy="226" r="6" fill="#6b8e4e"/>
+  <circle cx="501" cy="226" r="6" fill="#6b8e4e"/>
+  <circle cx="459" cy="226" r="2.8" fill="#20160e"/>
+  <circle cx="501" cy="226" r="2.8" fill="#20160e"/>
+  <circle cx="461" cy="223.5" r="1.5" fill="#ffffff"/>
+  <circle cx="503" cy="223.5" r="1.5" fill="#ffffff"/>
+  <path d="M445 222 q 13 -10 26 -2" stroke="#3d2718" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M515 222 q -13 -10 -26 -2" stroke="#3d2718" stroke-width="3" fill="none" stroke-linecap="round"/>
+  <path d="M480 230 L 472 256 L 488 256" stroke="#d79f78" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M452 270 Q 480 258 508 270 Q 500 294 480 294 Q 460 294 452 270 Z" fill="#8e2434"/>
+  <path d="M456 270 Q 480 262 504 270 L 500 275 Q 480 268 460 275 Z" fill="#ffffff"/>
+  <path d="M462 288 Q 480 298 498 288 Q 480 292 462 288 Z" fill="#c94f63"/>
+  <ellipse cx="438" cy="250" rx="14" ry="9" fill="#eb9aa8" opacity="0.45"/>
+  <ellipse cx="522" cy="250" rx="14" ry="9" fill="#eb9aa8" opacity="0.45"/>
+  <ellipse cx="480" cy="548" rx="40" ry="10" fill="#2a2a2e"/>
+  <rect x="474" y="470" width="12" height="76" rx="5" fill="#3a3a40"/>
+  <rect x="477" y="470" width="3" height="76" fill="#55555c"/>
+  <ellipse cx="480" cy="462" rx="17" ry="26" fill="#2f2f34"/>
+  <ellipse cx="480" cy="462" rx="17" ry="26" fill="none" stroke="#1a1a1e" stroke-width="3"/>
+  <g stroke="#4a4a52" stroke-width="1.6">
+    <line x1="466" y1="450" x2="494" y2="450"/>
+    <line x1="464" y1="462" x2="496" y2="462"/>
+    <line x1="466" y1="474" x2="494" y2="474"/>
+  </g>
+  <rect width="960" height="560" fill="url(#scan)"/>
 </svg>

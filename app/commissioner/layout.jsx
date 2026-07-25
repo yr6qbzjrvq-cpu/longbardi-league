@@ -54,7 +54,7 @@ export default function CommissionerLayout({ children }) {
                 <h1>★ COMMISSIONER MODE ★</h1>
                 <p>
                   The Official News Organ of the Longbardi League &middot;
-                  Juche Fantasy Football Since 2021 &middot; All Glory to the
+                  Serving the People Since 2021 &middot; All Glory to the
                   Commissioner
                 </p>
               </div>

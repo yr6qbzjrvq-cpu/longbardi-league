@@ -83,11 +83,12 @@ export default function CommissionerAnnouncements() {
       )}
 
       {ANNOUNCEMENTS.map((a) => (
-        <div key={a.date + a.text.slice(0, 24)}>
+        <div key={a.date + a.title}>
           <hr className="cm-hr" />
           <span className="cm-new">■ OFFICIAL</span>
           <h3 className="cm-h3">
-            PROCLAMATION OF {formatAnnouncementDate(a.date).toUpperCase()}
+            {a.title ? a.title.toUpperCase() + " — " : ""}PROCLAMATION OF{" "}
+            {formatAnnouncementDate(a.date).toUpperCase()}
           </h3>
           <p>{announcementPreamble()}</p>
           <table

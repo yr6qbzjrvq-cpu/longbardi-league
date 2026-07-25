@@ -38,21 +38,30 @@ export default function StandingsPage() {
           {CHAMPIONS.map((c) => (
             <div
               key={c.year}
-              className="relative overflow-hidden rounded-xl border border-ink-700 bg-ink-800 p-6"
+              className={`relative overflow-hidden rounded-xl border bg-ink-800 p-6 ${
+                c.pending
+                  ? "border-dashed border-blaze-500/60"
+                  : "border-ink-700"
+              }`}
             >
               <span className="absolute -right-4 -top-6 font-display text-8xl font-bold text-ink-700/60">
                 {c.year}
               </span>
               <p className="font-display text-xs uppercase tracking-widest text-blaze-400">
-                {c.year} Champion
+                {c.pending
+                  ? `${c.year} Future Champion™`
+                  : `${c.year} Champion`}
               </p>
               <h3 className="mt-1 font-display text-2xl uppercase tracking-wide text-white">
                 {c.team}
+                {c.pending && " (Allegedly)"}
               </h3>
-              <p className="mt-1 text-sm text-slate-400">
-                Manager: <span className="text-slate-200">{c.manager}</span> ·{" "}
-                {c.record}
-              </p>
+              {c.manager && (
+                <p className="mt-1 text-sm text-slate-400">
+                  Manager: <span className="text-slate-200">{c.manager}</span>
+                  {c.record ? ` · ${c.record}` : ""}
+                </p>
+              )}
               <p className="relative mt-3 text-sm text-slate-400">{c.note}</p>
             </div>
           ))}

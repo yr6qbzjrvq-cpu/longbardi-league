@@ -30,17 +30,17 @@ export default async function AdminPage() {
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl uppercase tracking-wide text-white">
+          <h1 className="font-display text-3xl font-semibold uppercase tracking-wide text-gray-900">
             Commissioner Dashboard
           </h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-gray-500">
             Create, edit, and publish league articles.
           </p>
         </div>
         <div className="flex gap-3">
           <Link
             href="/admin/new"
-            className="rounded-lg bg-turf-500 px-6 py-2 font-display uppercase tracking-widest text-ink-950 transition-colors hover:bg-turf-400"
+            className="rounded-md bg-espn px-6 py-2 font-display uppercase tracking-widest text-white transition-colors hover:bg-espn-dark"
           >
             + Create New Article
           </Link>
@@ -49,16 +49,16 @@ export default async function AdminPage() {
       </div>
 
       {!isSupabaseConfigured() && (
-        <div className="mb-6 rounded-lg border border-blaze-500/40 bg-blaze-500/10 px-4 py-3 text-sm text-blaze-400">
+        <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <strong>Supabase not connected yet.</strong> The public site is
           showing sample articles. Add your Supabase keys to{" "}
-          <code className="rounded bg-ink-800 px-1">.env.local</code> (and
+          <code className="rounded bg-amber-100 px-1">.env.local</code> (and
           Vercel) to enable publishing — see the README.
         </div>
       )}
 
       {loadError && (
-        <div className="mb-6 rounded-lg border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">
+        <div className="mb-6 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
           Couldn&apos;t load articles: {loadError}
         </div>
       )}
@@ -68,7 +68,7 @@ export default async function AdminPage() {
           <AdminArticleRow key={article.id} article={article} />
         ))}
         {articles.length === 0 && isSupabaseConfigured() && !loadError && (
-          <p className="rounded-lg border border-ink-700 bg-ink-800 px-4 py-8 text-center text-slate-400">
+          <p className="rounded-md border border-gray-200 px-4 py-8 text-center text-gray-500">
             No articles yet. Hit &ldquo;Create New Article&rdquo; to publish
             your first story.
           </p>

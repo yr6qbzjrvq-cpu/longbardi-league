@@ -10,11 +10,11 @@ export default async function ArticlesPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-      <h1 className="mb-6 border-b-2 border-turf-500 pb-3 font-display text-3xl uppercase tracking-wide text-white sm:text-4xl">
+      <h1 className="mb-6 border-b-2 border-espn pb-3 font-display text-3xl font-semibold uppercase tracking-wide text-gray-900">
         All Articles
       </h1>
       {articles.length === 0 ? (
-        <p className="text-slate-400">No articles yet. Check back soon.</p>
+        <p className="text-gray-500">No articles yet. Check back soon.</p>
       ) : (
         <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {articles.map((article) => (

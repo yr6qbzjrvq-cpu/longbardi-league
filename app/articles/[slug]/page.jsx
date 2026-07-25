@@ -26,21 +26,19 @@ export default async function ArticlePage({ params }) {
 
   return (
     <article className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
-      <p className="mb-3 font-display text-xs uppercase tracking-widest text-turf-400">
-        {date}
-      </p>
-      <h1 className="font-display text-3xl uppercase leading-tight tracking-wide text-white sm:text-5xl">
+      <h1 className="font-display text-3xl font-semibold leading-tight text-gray-900 sm:text-5xl">
         {article.title}
       </h1>
       {article.excerpt && (
-        <p className="mt-4 text-lg text-slate-400">{article.excerpt}</p>
+        <p className="mt-4 text-lg text-gray-600">{article.excerpt}</p>
       )}
+      <p className="mt-3 text-sm text-gray-500">{date}</p>
       {article.image_url && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={article.image_url}
           alt={article.title}
-          className="mt-6 aspect-video w-full rounded-xl object-cover"
+          className="mt-6 aspect-video w-full rounded-md object-cover"
         />
       )}
       <div className="article-body mt-8">

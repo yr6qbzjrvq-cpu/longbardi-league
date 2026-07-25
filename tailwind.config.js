@@ -4,22 +4,15 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        ink: {
-          950: "#07090F",
-          900: "#0B0E16",
-          800: "#131826",
-          700: "#1C2336",
-          600: "#2A3349",
+        espn: {
+          DEFAULT: "#CC0000",
+          dark: "#A50000",
         },
-        turf: {
-          400: "#34D399",
-          500: "#10B981",
-          600: "#059669",
+        nav: {
+          DEFAULT: "#1B1C1F",
+          light: "#2A2B2F",
         },
-        blaze: {
-          400: "#FBBF24",
-          500: "#F59E0B",
-        },
+        link: "#2566B2",
       },
       fontFamily: {
         display: ["var(--font-oswald)", "sans-serif"],

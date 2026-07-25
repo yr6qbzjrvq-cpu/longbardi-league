@@ -8,34 +8,34 @@
 }
 
 body {
-  @apply bg-ink-950 text-slate-200 font-body antialiased;
+  @apply bg-white text-gray-800 font-body antialiased;
 }
 
 ::selection {
-  background: rgba(16, 185, 129, 0.4);
+  background: rgba(204, 0, 0, 0.15);
 }
 
 /* Rendered markdown article body */
 .article-body {
-  @apply text-slate-300 leading-relaxed;
+  @apply text-gray-800 leading-relaxed;
 }
 .article-body h1 {
-  @apply font-display text-3xl md:text-4xl text-white uppercase tracking-wide mt-10 mb-4;
+  @apply font-display text-3xl md:text-4xl font-semibold text-gray-900 mt-10 mb-4;
 }
 .article-body h2 {
-  @apply font-display text-2xl md:text-3xl text-white uppercase tracking-wide mt-8 mb-3;
+  @apply font-display text-2xl md:text-3xl font-semibold text-gray-900 mt-8 mb-3;
 }
 .article-body h3 {
-  @apply font-display text-xl text-white uppercase tracking-wide mt-6 mb-2;
+  @apply font-display text-xl font-semibold text-gray-900 mt-6 mb-2;
 }
 .article-body p {
   @apply my-4 text-base md:text-lg;
 }
 .article-body a {
-  @apply text-turf-400 underline underline-offset-2 hover:text-turf-500;
+  @apply text-link underline underline-offset-2 hover:text-espn;
 }
 .article-body strong {
-  @apply text-white;
+  @apply text-gray-900;
 }
 .article-body ul {
   @apply list-disc pl-6 my-4 space-y-2;
@@ -44,26 +44,26 @@ body {
   @apply list-decimal pl-6 my-4 space-y-2;
 }
 .article-body blockquote {
-  @apply border-l-4 border-turf-500 pl-4 italic text-slate-400 my-6;
+  @apply border-l-4 border-espn pl-4 italic text-gray-500 my-6;
 }
 .article-body img {
   @apply rounded-lg my-6;
 }
 .article-body hr {
-  @apply border-ink-600 my-8;
+  @apply border-gray-200 my-8;
 }
 .article-body code {
-  @apply bg-ink-800 px-1.5 py-0.5 rounded text-sm text-turf-400;
+  @apply bg-gray-100 px-1.5 py-0.5 rounded text-sm text-espn;
 }
 .article-body pre {
-  @apply bg-ink-800 p-4 rounded-lg overflow-x-auto my-6;
+  @apply bg-gray-100 p-4 rounded-lg overflow-x-auto my-6;
 }
 .article-body table {
   @apply w-full my-6 text-sm;
 }
 .article-body th {
-  @apply text-left font-display uppercase tracking-wider text-slate-400 border-b border-ink-600 py-2 pr-4;
+  @apply text-left font-display uppercase tracking-wider text-gray-500 border-b border-gray-300 py-2 pr-4;
 }
 .article-body td {
-  @apply border-b border-ink-700 py-2 pr-4;
+  @apply border-b border-gray-200 py-2 pr-4;
 }

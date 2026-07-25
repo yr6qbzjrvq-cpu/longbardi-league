@@ -9,7 +9,7 @@ const LINKS = [
   { href: "/", label: "Home" },
   { href: "/articles", label: "News" },
   { href: "/announcements", label: "Announcements" },
-  { href: "/opinions", label: "Opinions" },
+  { href: "/discussion", label: "Discussion" },
   { href: "/standings", label: "Standings" },
   { href: "/chat", label: "Chat" },
   { href: "/commissioner", label: "Commissioner Mode" },

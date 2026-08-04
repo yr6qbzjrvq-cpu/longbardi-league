@@ -1,5 +1,5 @@
 import Link from "next/link";
-import DraftCountdown from "@/components/DraftCountdown";
+import Countdowns from "@/components/Countdowns";
 import HeroArticle from "@/components/HeroArticle";
 import ArticleCard from "@/components/ArticleCard";
 import StandingsTable from "@/components/StandingsTable";
@@ -23,7 +23,7 @@ export default async function HomePage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-      <DraftCountdown />
+      <Countdowns />
 
       <div className="grid gap-8 lg:grid-cols-3">
         {/* Main column */}

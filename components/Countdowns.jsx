@@ -88,27 +88,89 @@ function DraftBar() {
   );
 }
 
+// [left%, top%, width px, height px, rotation deg, tailwind bg]
+const CONFETTI = [
+  [3, 18, 8, 12, -20, "bg-amber-400"],
+  [9, 62, 7, 11, 35, "bg-rose-500"],
+  [15, 12, 6, 10, 12, "bg-emerald-400"],
+  [21, 78, 8, 8, -45, "bg-violet-500"],
+  [28, 30, 6, 12, 25, "bg-espn"],
+  [34, 70, 7, 7, -15, "bg-amber-400"],
+  [41, 14, 8, 11, 40, "bg-rose-500"],
+  [48, 84, 6, 10, -30, "bg-emerald-400"],
+  [55, 26, 7, 12, 18, "bg-violet-500"],
+  [62, 66, 8, 8, -40, "bg-amber-400"],
+  [69, 10, 6, 11, 22, "bg-espn"],
+  [76, 74, 7, 10, -25, "bg-rose-500"],
+  [83, 22, 8, 12, 45, "bg-emerald-400"],
+  [89, 58, 6, 9, -10, "bg-violet-500"],
+  [94, 34, 7, 11, 30, "bg-amber-400"],
+  [97, 80, 6, 8, -35, "bg-rose-500"],
+];
+
+function Confetti() {
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+      {CONFETTI.map(([l, top, w, h, rot, color], i) => (
+        <span
+          key={i}
+          className={`absolute rounded-[1px] opacity-70 ${color}`}
+          style={{
+            left: `${l}%`,
+            top: `${top}%`,
+            width: `${w}px`,
+            height: `${h}px`,
+            transform: `rotate(${rot}deg)`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function BirthdayBar() {
   const remaining = useCountdown(BIRTHDAY_TIME);
   const isToday = remaining !== null && remaining <= 0;
   const t = breakdown(remaining ?? 0);
 
   return (
-    <section className="rounded-md border border-gray-200 bg-white">
-      <div className="flex flex-col items-center gap-4 px-4 py-4 sm:flex-row sm:justify-between sm:px-6">
-        <div className="flex items-center gap-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/commissioner.svg"
-            alt="The Commissioner"
-            className="h-14 w-14 shrink-0 rounded-full border-2 border-espn object-cover sm:h-16 sm:w-16"
-            style={{ objectPosition: "center 20%" }}
-          />
+    <section className="relative overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50">
+      {/* Streamer along the top edge */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-1.5"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(90deg, #1d4ed8 0 14px, #f59e0b 14px 28px, #f43f5e 28px 42px, #10b981 42px 56px)",
+        }}
+      />
+      <Confetti />
+
+      <div className="relative flex flex-col items-center gap-4 px-4 py-6 sm:flex-row sm:justify-between sm:px-6">
+        <div className="flex items-center gap-5">
+          <div className="relative shrink-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/commissioner.svg"
+              alt="The Commissioner"
+              className="h-28 w-28 rounded-full border-4 border-espn object-cover shadow-sm sm:h-36 sm:w-36"
+              style={{ objectPosition: "center 18%" }}
+            />
+            {/* Party hat */}
+            <span
+              aria-hidden="true"
+              className="absolute -left-1 -top-3 rotate-[-22deg] sm:-left-2 sm:-top-4"
+            >
+              <span className="block h-0 w-0 border-x-[13px] border-b-[26px] border-x-transparent border-b-rose-500 sm:border-x-[16px] sm:border-b-[32px]" />
+              <span className="absolute -top-2 left-1/2 h-3 w-3 -translate-x-1/2 rounded-full bg-amber-400 sm:h-3.5 sm:w-3.5" />
+            </span>
+          </div>
+
           <div className="text-center sm:text-left">
             <p className="font-display text-[11px] font-semibold uppercase tracking-widest text-espn">
               {isToday ? "Today" : "Countdown to Austin's Birthday"}
             </p>
-            <p className="mt-1 font-display text-base font-semibold uppercase tracking-wide text-gray-900 sm:text-lg">
+            <p className="mt-1 font-display text-lg font-semibold uppercase tracking-wide text-gray-900 sm:text-2xl">
               {isToday
                 ? "Happy birthday, Commissioner"
                 : "Friday, May 21, 2027"}

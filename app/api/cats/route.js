@@ -1,83 +1,46 @@
 import { NextResponse } from "next/server";
+import { isAuthed } from "@/lib/auth";
 import { getAdminClient } from "@/lib/supabase";
 
-const ALLOWED = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const MAX_BYTES = 5 * 1024 * 1024;
-const EXT = {
-  "image/jpeg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
+const CATS = ["johnny", "stevie"];
 
+// Records a photo after the browser has already pushed the file to storage.
+// Admin only: every photo needs a correct answer attached, so randoms can't add.
 export async function POST(request) {
-  const supabase = getAdminClient();
-  if (!supabase) {
-    return NextResponse.json(
-      { error: "Uploads aren't set up yet." },
-      { status: 503 }
-    );
+  if (!(await isAuthed())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let form;
+  let payload;
   try {
-    form = await request.formData();
+    payload = await request.json();
   } catch {
     return NextResponse.json({ error: "Bad request." }, { status: 400 });
   }
 
-  const file = form.get("file");
-  const name = String(form.get("name") || "").trim();
-  const caption = String(form.get("caption") || "").trim();
+  const path = String(payload?.path || "").trim();
+  const cat = String(payload?.cat || "").toLowerCase();
 
-  if (!file || typeof file === "string") {
-    return NextResponse.json({ error: "Pick a photo first." }, { status: 400 });
+  if (!path) {
+    return NextResponse.json({ error: "Missing file." }, { status: 400 });
   }
-  if (!name || name.length > 40) {
-    return NextResponse.json({ error: "Add your name." }, { status: 400 });
-  }
-  if (caption.length > 140) {
+  if (!CATS.includes(cat)) {
     return NextResponse.json(
-      { error: "Caption is too long." },
-      { status: 400 }
-    );
-  }
-  if (!ALLOWED.includes(file.type)) {
-    return NextResponse.json(
-      { error: "That file type isn't supported. Use JPG, PNG, WEBP or GIF." },
-      { status: 400 }
-    );
-  }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json(
-      { error: "That image is too large. Keep it under 5MB." },
+      { error: "Pick Johnny or Stevie." },
       { status: 400 }
     );
   }
 
-  const path = `${Date.now()}-${crypto.randomUUID()}.${EXT[file.type]}`;
-  const bytes = Buffer.from(await file.arrayBuffer());
-
-  const { error: uploadError } = await supabase.storage
-    .from("cat-photos")
-    .upload(path, bytes, { contentType: file.type, upsert: false });
-
-  if (uploadError) {
-    return NextResponse.json(
-      { error: "Couldn't save that image. Try again." },
-      { status: 500 }
-    );
+  const supabase = getAdminClient();
+  if (!supabase) {
+    return NextResponse.json({ error: "Not configured" }, { status: 503 });
   }
 
-  const { error: rowError } = await supabase
-    .from("cat_photos")
-    .insert({ path, name: name.slice(0, 40), caption: caption || null });
-
-  if (rowError) {
-    // Don't leave an orphaned file behind if the row insert fails.
+  const { error } = await supabase.from("cat_photos").insert({ path, cat });
+  if (error) {
     await supabase.storage.from("cat-photos").remove([path]);
     return NextResponse.json(
-      { error: "Couldn't save that image. Try again." },
+      { error: "Couldn't save that photo." },
       { status: 500 }
     );
   }

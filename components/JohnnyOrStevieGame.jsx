@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-function Verdict({ score, total }) {
+const FEEDBACK_MS = 1200;
+
+function verdict(score, total) {
   const pct = total ? score / total : 0;
   if (pct === 1) return "Perfect. Suspicious, even.";
   if (pct >= 0.8) return "You know these cats.";
@@ -11,13 +13,18 @@ function Verdict({ score, total }) {
   return "Worse than guessing. Impressive in its own way.";
 }
 
+function label(cat) {
+  return cat === "johnny" ? "Johnny" : "Stevie";
+}
+
 export default function JohnnyOrStevieGame() {
-  const [phase, setPhase] = useState("intro"); // intro | playing | scoring | results
+  const [phase, setPhase] = useState("intro"); // intro | playing | results
   const [questions, setQuestions] = useState([]);
   const [available, setAvailable] = useState(null);
   const [index, setIndex] = useState(0);
-  const [answers, setAnswers] = useState([]);
-  const [outcome, setOutcome] = useState(null);
+  const [results, setResults] = useState([]);
+  const [feedback, setFeedback] = useState(null); // {correct, actual, guess}
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState("");
 
   const loadCount = useCallback(async () => {
@@ -49,36 +56,50 @@ export default function JohnnyOrStevieGame() {
       return;
     }
     setQuestions(json.questions);
-    setAnswers([]);
+    setResults([]);
     setIndex(0);
-    setOutcome(null);
+    setFeedback(null);
     setPhase("playing");
   }
 
   async function answer(guess) {
-    const next = [...answers, { id: questions[index].id, guess }];
-    setAnswers(next);
+    if (checking || feedback) return; // ignore double taps
+    setChecking(true);
+    setError("");
 
-    if (index + 1 < questions.length) {
-      setIndex(index + 1);
-      return;
-    }
-
-    setPhase("scoring");
+    // Grade this one question on the server. Sending a single answer keeps the
+    // correct label out of the browser until the moment it's revealed.
+    let result;
     try {
       const res = await fetch("/api/game/score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers: next }),
+        body: JSON.stringify({
+          answers: [{ id: questions[index].id, guess }],
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error();
-      setOutcome(json);
-      setPhase("results");
+      result = json.results[0];
     } catch {
-      setError("Couldn't score that round.");
-      setPhase("intro");
+      setChecking(false);
+      setError("Couldn't check that one. Tap again.");
+      return;
     }
+
+    const nextResults = [...results, result];
+    setResults(nextResults);
+    setFeedback(result);
+    setChecking(false);
+
+    setTimeout(() => {
+      setFeedback(null);
+      if (index + 1 < questions.length) {
+        setIndex(index + 1);
+      } else {
+        setPhase("results");
+      }
+    }, FEEDBACK_MS);
   }
 
   if (phase === "intro") {
@@ -109,60 +130,76 @@ export default function JohnnyOrStevieGame() {
     );
   }
 
-  if (phase === "playing" || phase === "scoring") {
+  if (phase === "playing") {
     const q = questions[index];
-    const scoring = phase === "scoring";
+    const locked = Boolean(feedback) || checking;
+
     return (
       <div>
         <div className="mb-3 flex items-center justify-between">
           <p className="font-display text-sm uppercase tracking-widest text-gray-500">
             {index + 1} of {questions.length}
           </p>
-          <div className="h-1.5 w-40 overflow-hidden rounded-full bg-gray-200">
-            <div
-              className="h-full bg-espn transition-all"
-              style={{
-                width: `${((index + (scoring ? 1 : 0)) / questions.length) * 100}%`,
-              }}
-            />
-          </div>
+          <p className="font-display text-sm uppercase tracking-widest text-gray-500">
+            {results.filter((r) => r.correct).length} correct
+          </p>
         </div>
 
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={q.url}
-          alt="Which cat is this?"
-          className="mx-auto max-h-[60vh] w-full rounded-md border border-gray-200 bg-gray-100 object-contain"
-        />
+        <div className="relative overflow-hidden rounded-md border border-gray-200 bg-gray-100">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={q.url}
+            alt="Which cat is this?"
+            className="mx-auto max-h-[55vh] w-full object-contain"
+          />
+
+          {feedback && (
+            <div
+              className={`absolute inset-0 flex flex-col items-center justify-center ${
+                feedback.correct ? "bg-green-600/85" : "bg-red-600/85"
+              }`}
+            >
+              <p className="font-display text-4xl font-semibold uppercase tracking-widest text-white sm:text-5xl">
+                {feedback.correct ? "Correct" : "Nope"}
+              </p>
+              <p className="mt-2 font-display text-lg uppercase tracking-widest text-white/90">
+                That&apos;s {label(feedback.actual)}
+              </p>
+            </div>
+          )}
+        </div>
 
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            disabled={scoring}
-            onClick={() => answer("johnny")}
-            className="rounded-md bg-nav px-6 py-5 font-display text-xl uppercase tracking-widest text-white transition-colors hover:bg-espn disabled:opacity-50"
-          >
-            Johnny
-          </button>
-          <button
-            type="button"
-            disabled={scoring}
-            onClick={() => answer("stevie")}
-            className="rounded-md bg-nav px-6 py-5 font-display text-xl uppercase tracking-widest text-white transition-colors hover:bg-espn disabled:opacity-50"
-          >
-            Stevie
-          </button>
+          {["johnny", "stevie"].map((c) => (
+            <button
+              key={c}
+              type="button"
+              disabled={locked}
+              onClick={() => answer(c)}
+              className={`rounded-md px-6 py-5 font-display text-xl uppercase tracking-widest text-white transition-colors disabled:cursor-default ${
+                feedback && feedback.guess === c
+                  ? feedback.correct
+                    ? "bg-green-600"
+                    : "bg-red-600"
+                  : "bg-nav hover:bg-espn disabled:opacity-40"
+              }`}
+            >
+              {label(c)}
+            </button>
+          ))}
         </div>
-        {scoring && (
-          <p className="mt-4 text-center text-sm text-gray-500">
-            Scoring...
-          </p>
+
+        {error && (
+          <p className="mt-3 text-center text-sm text-red-600">{error}</p>
         )}
       </div>
     );
   }
 
   // results
+  const score = results.filter((r) => r.correct).length;
+  const total = results.length;
+
   return (
     <div>
       <div className="rounded-md bg-nav px-6 py-10 text-center">
@@ -170,12 +207,10 @@ export default function JohnnyOrStevieGame() {
           Final Score
         </p>
         <p className="mt-2 font-display text-6xl font-semibold text-white">
-          {outcome.score}
-          <span className="text-3xl text-gray-400">/{outcome.total}</span>
+          {score}
+          <span className="text-3xl text-gray-400">/{total}</span>
         </p>
-        <p className="mt-3 text-gray-300">
-          <Verdict score={outcome.score} total={outcome.total} />
-        </p>
+        <p className="mt-3 text-gray-300">{verdict(score, total)}</p>
         <button
           type="button"
           onClick={start}
@@ -189,7 +224,7 @@ export default function JohnnyOrStevieGame() {
         The Answers
       </h3>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {outcome.results.map((r, i) => (
+        {results.map((r, i) => (
           <figure
             key={r.id || i}
             className={`overflow-hidden rounded-md border-2 ${
@@ -209,11 +244,11 @@ export default function JohnnyOrStevieGame() {
                   r.correct ? "text-green-700" : "text-red-600"
                 }`}
               >
-                {r.actual === "johnny" ? "Johnny" : "Stevie"}
+                {label(r.actual)}
               </p>
               {!r.correct && (
                 <p className="text-[11px] text-gray-500">
-                  you said {r.guess === "johnny" ? "Johnny" : "Stevie"}
+                  you said {label(r.guess)}
                 </p>
               )}
             </figcaption>

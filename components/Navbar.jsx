@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/articles", label: "News" },
   { href: "/announcements", label: "Announcements" },
   { href: "/discussion", label: "Discussion" },
+  { href: "/cats", label: "Cats" },
   { href: "/standings", label: "Standings" },
   { href: "/chat", label: "Chat" },
   { href: "/commissioner", label: "Commissioner Mode" },
@@ -57,7 +58,7 @@ export default function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex items-center border-b-[3px] px-4 font-display text-sm uppercase tracking-widest transition-colors ${
+                className={`flex items-center border-b-[3px] px-3 font-display text-sm uppercase tracking-widest transition-colors ${
                   active
                     ? "border-espn text-white"
                     : "border-transparent text-gray-300 hover:text-white"

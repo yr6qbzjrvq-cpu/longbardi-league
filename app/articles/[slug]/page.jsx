@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import ArticleBody from "@/components/ArticleBody";
 import { getArticleBySlug } from "@/lib/articles";
 import Comments from "@/components/Comments";
 
@@ -43,9 +42,7 @@ export default async function ArticlePage({ params }) {
         />
       )}
       <div className="article-body mt-8">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {article.content}
-        </ReactMarkdown>
+        <ArticleBody content={article.content} />
       </div>
       <Comments threadKey={`article:${article.slug}`} />
     </article>

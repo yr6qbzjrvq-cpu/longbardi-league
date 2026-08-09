@@ -1,5 +1,7 @@
-import { ANNOUNCEMENTS, formatAnnouncementDate } from "@/lib/announcements";
+import { getAnnouncements, formatAnnouncementDate } from "@/lib/announcements";
 import { announcementPreamble, announcementClosing } from "@/lib/propaganda";
+
+export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Words of the Commissioner" };
 
@@ -29,7 +31,9 @@ const SPARKS = [
   [66, 96],
 ];
 
-export default function CommissionerAnnouncements() {
+export default async function CommissionerAnnouncements() {
+  const announcements = await getAnnouncements();
+
   return (
     <div>
       <h2 className="cm-h2">❤ WORDS OF THE COMMISSIONER ❤</h2>
@@ -76,19 +80,19 @@ export default function CommissionerAnnouncements() {
         </div>
       </center>
 
-      {ANNOUNCEMENTS.length === 0 && (
+      {announcements.length === 0 && (
         <p style={{ textAlign: "center" }}>
           <b>The league awaits the words of the Commissioner.</b>
         </p>
       )}
 
-      {ANNOUNCEMENTS.map((a) => (
-        <div key={a.date + a.title}>
+      {announcements.map((a) => (
+        <div key={a.id}>
           <hr className="cm-hr" />
           <span className="cm-new">■ OFFICIAL</span>
           <h3 className="cm-h3">
             {a.title ? a.title.toUpperCase() + " — " : ""}PROCLAMATION OF{" "}
-            {formatAnnouncementDate(a.date).toUpperCase()}
+            {formatAnnouncementDate(a.published_on).toUpperCase()}
           </h3>
           <p>{announcementPreamble()}</p>
           <table
@@ -103,7 +107,7 @@ export default function CommissionerAnnouncements() {
             <tbody>
               <tr>
                 <td>
-                  {a.text
+                  {a.body
                     .trim()
                     .split(/\n\s*\n/)
                     .map((para, i) => (

@@ -8,6 +8,9 @@ import { useEffect, useState } from "react";
 const DRAFT_TIME = new Date("2026-09-06T14:00:00-07:00").getTime();
 const BIRTHDAY_TIME = new Date("2027-05-21T00:00:00-07:00").getTime();
 
+const GIFT_LIST_URL =
+  "https://www.amazon.com/registries/gl/owner-view/28CJFEWGKNI?ref_=list_d_gl_lfu_nav_3";
+
 function breakdown(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
   return {
@@ -116,13 +119,20 @@ function Confetti() {
   );
 }
 
+// The whole card links out to the Commissioner's gift list.
 function BirthdayBar() {
   const remaining = useCountdown(BIRTHDAY_TIME);
   const isToday = remaining !== null && remaining <= 0;
   const t = breakdown(remaining ?? 0);
 
   return (
-    <section className="relative overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50">
+    <a
+      href={GIFT_LIST_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="The Commissioner's gift list"
+      className="group relative block overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 transition-colors hover:border-espn"
+    >
       <div
         aria-hidden="true"
         className="absolute inset-x-0 top-0 h-1"
@@ -157,14 +167,17 @@ function BirthdayBar() {
             <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-espn">
               {isToday ? "Today" : "Austin's Birthday"}
             </p>
-            <p className="font-display text-sm font-semibold uppercase tracking-wide text-gray-900">
+            <p className="font-display text-sm font-semibold uppercase tracking-wide text-gray-900 group-hover:underline">
               {isToday ? "Happy birthday, Commissioner" : "Fri, May 21, 2027"}
+            </p>
+            <p className="mt-0.5 text-[11px] text-gray-500 group-hover:text-espn">
+              Gift list &rarr;
             </p>
           </div>
         </div>
         {!isToday && <Tiles t={t} pending={remaining === null} />}
       </div>
-    </section>
+    </a>
   );
 }
 

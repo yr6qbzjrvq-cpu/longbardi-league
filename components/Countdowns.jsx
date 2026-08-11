@@ -119,7 +119,8 @@ function Confetti() {
   );
 }
 
-// The whole card links out to the Commissioner's gift list.
+// The whole card links out to the gift list, with no visual hint that it does.
+// No hover state, no tooltip, and cursor-default so it reads as static.
 function BirthdayBar() {
   const remaining = useCountdown(BIRTHDAY_TIME);
   const isToday = remaining !== null && remaining <= 0;
@@ -130,8 +131,7 @@ function BirthdayBar() {
       href={GIFT_LIST_URL}
       target="_blank"
       rel="noopener noreferrer"
-      title="The Commissioner's gift list"
-      className="group relative block overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 transition-colors hover:border-espn"
+      className="relative block cursor-default overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50"
     >
       <div
         aria-hidden="true"
@@ -167,11 +167,8 @@ function BirthdayBar() {
             <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-espn">
               {isToday ? "Today" : "Austin's Birthday"}
             </p>
-            <p className="font-display text-sm font-semibold uppercase tracking-wide text-gray-900 group-hover:underline">
+            <p className="font-display text-sm font-semibold uppercase tracking-wide text-gray-900">
               {isToday ? "Happy birthday, Commissioner" : "Fri, May 21, 2027"}
-            </p>
-            <p className="mt-0.5 text-[11px] text-gray-500 group-hover:text-espn">
-              Gift list &rarr;
             </p>
           </div>
         </div>

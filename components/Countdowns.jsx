@@ -61,21 +61,71 @@ function Tiles({ t, pending }) {
   );
 }
 
+function Football() {
+  return (
+    <svg
+      viewBox="0 0 100 64"
+      aria-hidden="true"
+      className="h-11 w-[68px] shrink-0 -rotate-[18deg] drop-shadow sm:h-12 sm:w-[76px]"
+    >
+      {/* Ball */}
+      <path
+        d="M4 32 C20 8 80 8 96 32 C80 56 20 56 4 32 Z"
+        fill="#8a4b1f"
+        stroke="#f2e9df"
+        strokeWidth="2.5"
+      />
+      {/* End stripes */}
+      <path
+        d="M19 24 L19 40 M81 24 L81 40"
+        stroke="#f2e9df"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      {/* Laces */}
+      <path
+        d="M38 32 L62 32"
+        stroke="#f2e9df"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      <path
+        d="M43 27 L43 37 M50 27 L50 37 M57 27 L57 37"
+        stroke="#f2e9df"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function DraftBar() {
   const remaining = useCountdown(DRAFT_TIME);
   const onTheClock = remaining !== null && remaining <= 0;
   const t = breakdown(remaining ?? 0);
 
   return (
-    <section className="rounded-md bg-nav">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-        <div>
-          <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-gray-400">
-            {onTheClock ? "Longbardi League" : "Draft Day"}
-          </p>
-          <p className="font-display text-sm font-semibold uppercase tracking-wide text-white">
-            {onTheClock ? "We are on the clock" : "Sun, Sept 6 · 2:00 PM PT"}
-          </p>
+    <section className="relative overflow-hidden rounded-md bg-nav">
+      {/* Yard lines */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(90deg, rgba(255,255,255,0.07) 0 1px, transparent 1px 26px)",
+        }}
+      />
+      <div className="relative flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <Football />
+          <div>
+            <p className="font-display text-[10px] font-semibold uppercase tracking-widest text-gray-400">
+              {onTheClock ? "Longbardi League" : "Draft Day"}
+            </p>
+            <p className="font-display text-sm font-semibold uppercase tracking-wide text-white">
+              {onTheClock ? "We are on the clock" : "Sun, Sept 6 · 2:00 PM PT"}
+            </p>
+          </div>
         </div>
         {!onTheClock && <Tiles t={t} pending={remaining === null} />}
       </div>

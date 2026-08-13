@@ -23,9 +23,13 @@ export default function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 bg-nav shadow-md">
-      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
-        <Link href="/" className="flex items-center gap-3" onClick={() => setOpen(false)}>
-          <span className="flex -skew-x-6 items-center gap-1.5 bg-espn px-3 py-1">
+      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-2 px-4 sm:px-6">
+        <Link
+          href="/"
+          className="flex min-w-0 items-center gap-2 sm:gap-3"
+          onClick={() => setOpen(false)}
+        >
+          <span className="flex shrink-0 -skew-x-6 items-center gap-1.5 bg-espn px-3 py-1">
             <svg
               width="18"
               height="12"
@@ -43,7 +47,9 @@ export default function Navbar() {
               {BRAND.abbr}
             </span>
           </span>
-          <span className="hidden font-display text-xs uppercase tracking-widest text-gray-300 md:inline lg:text-sm">
+          {/* Shown at every width. Small and tightly tracked on phones so it
+              fits beside the logo and the menu button. */}
+          <span className="min-w-0 font-display text-[9px] uppercase leading-tight tracking-wide text-gray-300 sm:text-[11px] md:text-xs md:tracking-widest lg:text-sm">
             {BRAND.full}
           </span>
         </Link>
@@ -72,7 +78,7 @@ export default function Navbar() {
 
         <button
           onClick={() => setOpen(!open)}
-          className="flex h-10 w-10 items-center justify-center rounded text-gray-300 hover:text-white md:hidden"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded text-gray-300 hover:text-white md:hidden"
           aria-label="Toggle menu"
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

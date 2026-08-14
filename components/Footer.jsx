@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LEAGUE, CHAMPIONS, BRAND } from "@/lib/leagueData";
 import SubscribeForm from "@/components/SubscribeForm";
 
@@ -18,6 +19,17 @@ export default function Footer() {
           </p>
           <p>
             &copy; {LEAGUE.season} {LEAGUE.name} League &middot; Est. {est}
+          </p>
+          {/* Moved off the main nav — these are for the commissioner, not the
+              league, so they sit quietly down here. */}
+          <p className="flex items-center gap-3 text-xs text-gray-500">
+            <Link href="/commissioner" className="hover:text-gray-300">
+              Commissioner Mode
+            </Link>
+            <span aria-hidden="true">&middot;</span>
+            <Link href="/admin" className="hover:text-gray-300">
+              Admin
+            </Link>
           </p>
         </div>
       </div>

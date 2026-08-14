@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { TEAMS } from "@/lib/leagueData";
+import { TEAMS, PICKEM_EXTRA_PLAYERS } from "@/lib/leagueData";
 
-const MANAGERS = TEAMS.map((t) => t.manager).sort();
+const MANAGERS = [
+  ...TEAMS.map((t) => t.manager),
+  ...PICKEM_EXTRA_PLAYERS,
+].sort();
 
 function kickoffLabel(iso) {
   return new Date(iso).toLocaleString("en-US", {

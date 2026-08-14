@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { articleHref } from "@/lib/leagueData";
 
 export default function HeroArticle({ article }) {
   if (!article) return null;
@@ -9,7 +10,7 @@ export default function HeroArticle({ article }) {
   });
 
   return (
-    <Link href={`/articles/${article.slug}`} className="group block">
+    <Link href={articleHref(article)} className="group block">
       <div className="relative aspect-[16/9] overflow-hidden rounded-md bg-gray-100 sm:aspect-[21/10]">
         {article.image_url && (
           // eslint-disable-next-line @next/next/no-img-element

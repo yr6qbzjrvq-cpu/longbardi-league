@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { getWeek, isLocked, currentSeason, scorePicks } from "@/lib/nfl";
 import { getPicksForWeek, getPlayers } from "@/lib/pickem";
+import { canSeePickem } from "@/lib/pickemAccess";
 
 export const dynamic = "force-dynamic";
 
 // Public view of a week. Before the lock this returns the schedule and who has
 // submitted, but NEVER what anyone picked. After the lock it returns everything.
 export async function GET(request) {
+  if (!(await canSeePickem())) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+
   const { searchParams } = new URL(request.url);
   const week = Number(searchParams.get("week"));
 

@@ -63,6 +63,12 @@ export default async function AdminPage() {
             Cat Photos
           </Link>
           <Link
+            href="/admin/upload"
+            className="rounded-md border border-espn px-6 py-2 font-display uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+          >
+            Upload Image
+          </Link>
+          <Link
             href="/admin/pickem"
             className="rounded-md border border-espn px-6 py-2 font-display uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
           >

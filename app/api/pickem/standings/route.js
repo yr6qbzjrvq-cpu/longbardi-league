@@ -1,12 +1,17 @@
 import { NextResponse } from "next/server";
 import { getWeek, currentSeason, totalWeeks, scorePicks } from "@/lib/nfl";
 import { getAllPicks, getPlayers } from "@/lib/pickem";
+import { canSeePickem } from "@/lib/pickemAccess";
 
 export const dynamic = "force-dynamic";
 
 // Season standings. Only scores games that have actually finished, so an
 // unplayed week never counts against anyone.
 export async function GET() {
+  if (!(await canSeePickem())) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+
   const season = currentSeason();
   const [players, picks] = await Promise.all([getPlayers(), getAllPicks(season)]);
 

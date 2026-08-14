@@ -2,12 +2,17 @@ import { NextResponse } from "next/server";
 import { getWeek, isLocked, currentSeason } from "@/lib/nfl";
 import { authenticate, getPicksForWeek } from "@/lib/pickem";
 import { getAdminClient } from "@/lib/supabase";
+import { canSeePickem } from "@/lib/pickemAccess";
 
 export const dynamic = "force-dynamic";
 
 // GET: your own picks for a week. Requires your PIN, so nobody can read
 // someone else's sheet before the week locks.
 export async function GET(request) {
+  if (!(await canSeePickem())) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+
   const { searchParams } = new URL(request.url);
   const week = Number(searchParams.get("week"));
   const name = searchParams.get("name");
@@ -45,6 +50,10 @@ export async function GET(request) {
 
 // POST: submit or update picks. Refused once the week has locked.
 export async function POST(request) {
+  if (!(await canSeePickem())) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
+
   let payload;
   try {
     payload = await request.json();

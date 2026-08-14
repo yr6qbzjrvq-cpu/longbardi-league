@@ -9,7 +9,7 @@ import {
   getRecentArticles,
   getPublishedArticles,
 } from "@/lib/articles";
-import { WEEKLY_SCORES, isPreseason } from "@/lib/leagueData";
+import { WEEKLY_SCORES, isPreseason, articleHref } from "@/lib/leagueData";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +48,7 @@ export default async function HomePage() {
               {headlines.map((a) => (
                 <li key={a.id}>
                   <Link
-                    href={`/articles/${a.slug}`}
+                    href={articleHref(a)}
                     className="block py-2.5 text-sm font-medium text-gray-800 hover:underline"
                   >
                     {a.title}

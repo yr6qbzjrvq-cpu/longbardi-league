@@ -1,12 +1,16 @@
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import { currentSeason, totalWeeks, getWeek, scorePicks } from "@/lib/nfl";
 import { getAllPicks, getPlayers } from "@/lib/pickem";
+import { canSeePickem } from "@/lib/pickemAccess";
 
 export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Pick 'Em Standings" };
 
 export default async function PickemStandingsPage() {
+  if (!(await canSeePickem())) notFound();
+
   const season = currentSeason();
   const [players, picks] = await Promise.all([getPlayers(), getAllPicks(season)]);
 

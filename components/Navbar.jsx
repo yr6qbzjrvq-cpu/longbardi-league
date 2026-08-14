@@ -11,12 +11,9 @@ const LINKS = [
   { href: "/announcements", label: "Announcements" },
   // Hidden until Pick 'Em is opened up to the league.
   ...(PICKEM_PUBLIC ? [{ href: "/pickem", label: "Pick 'Em" }] : []),
-  { href: "/discussion", label: "Discussion" },
   { href: "/johnny-or-stevie", label: "Johnny or Stevie" },
   { href: "/standings", label: "Standings" },
   { href: "/chat", label: "Chat" },
-  { href: "/commissioner", label: "Commissioner Mode" },
-  { href: "/admin", label: "Admin" },
 ];
 
 export default function Navbar() {

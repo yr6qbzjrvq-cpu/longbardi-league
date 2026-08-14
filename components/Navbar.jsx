@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/", label: "Home" },
   { href: "/articles", label: "News" },
   { href: "/announcements", label: "Announcements" },
+  { href: "/pickem", label: "Pick 'Em" },
   { href: "/discussion", label: "Discussion" },
   { href: "/johnny-or-stevie", label: "Johnny or Stevie" },
   { href: "/standings", label: "Standings" },

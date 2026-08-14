@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { articleHref } from "@/lib/leagueData";
 
 export default function ArticleCard({ article }) {
   const date = new Date(article.created_at).toLocaleDateString("en-US", {
@@ -9,7 +10,7 @@ export default function ArticleCard({ article }) {
 
   return (
     <Link
-      href={`/articles/${article.slug}`}
+      href={articleHref(article)}
       className="group flex flex-col overflow-hidden rounded-md border border-gray-200 bg-white transition-shadow hover:shadow-md"
     >
       <div className="relative aspect-video overflow-hidden bg-gray-100">

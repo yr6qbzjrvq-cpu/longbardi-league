@@ -3,13 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BRAND } from "@/lib/leagueData";
+import { BRAND, PICKEM_PUBLIC } from "@/lib/leagueData";
 
 const LINKS = [
   { href: "/", label: "Home" },
   { href: "/articles", label: "News" },
   { href: "/announcements", label: "Announcements" },
-  { href: "/pickem", label: "Pick 'Em" },
+  // Hidden until Pick 'Em is opened up to the league.
+  ...(PICKEM_PUBLIC ? [{ href: "/pickem", label: "Pick 'Em" }] : []),
   { href: "/discussion", label: "Discussion" },
   { href: "/johnny-or-stevie", label: "Johnny or Stevie" },
   { href: "/standings", label: "Standings" },

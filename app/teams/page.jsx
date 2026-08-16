@@ -76,7 +76,7 @@ export default async function TeamsPage() {
                   </td>
                 </tr>
                 {roster.bench.map((p, i) => (
-                  <Row key={`$b${i}`} player={p} />
+                  <Row key={`b${i}`} player={p} />
                 ))}
               </tbody>
             </table>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 const REFRESH_MS = 45000;
@@ -88,16 +89,17 @@ export default function MatchupBoard({ initialWeek, totalWeeks }) {
       ) : (
         <div className="space-y-3">
           {matchups.map((m, i) => (
-            <div
+            <Link
               key={i}
-              className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-md border border-gray-200 px-4 py-4"
+              href={m.href || `/matchups/${m.week}/${m.slug}`}
+              className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-md border border-gray-200 px-4 py-4 transition-colors hover:border-espn"
             >
               <Side side={m.away} opponent={m.home} />
               <span className="font-display text-xs uppercase tracking-widest text-gray-300">
                 vs
               </span>
               <Side side={m.home} opponent={m.away} align="right" />
-            </div>
+            </Link>
           ))}
         </div>
       )}

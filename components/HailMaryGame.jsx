@@ -44,7 +44,12 @@ export default function HailMaryGame() {
   const onDown = (e) => {
     const w = world.current;
     if (!w || w.ball || w.ballsLeft <= 0 || w.status === "won") return;
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    // Keeps the drag alive if the finger leaves the canvas. Safari throws here
+    // for pointers it doesn't recognise, and a failed capture shouldn't cost
+    // you the shot.
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {}
     w.drag = toWorld(e);
   };
 

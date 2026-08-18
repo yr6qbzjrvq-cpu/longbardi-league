@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LEVELS, MATERIALS, WORLD_W, WORLD_H, GROUND_Y } from "@/lib/hailMaryLevels";
+import { QB_HEAD_SRC } from "@/lib/hailMaryHead";
 import {
   BALL_R,
-  GRAVITY,
   MAX_PULL,
   POWER,
   SLING,
@@ -13,6 +13,23 @@ import {
   launch,
   step,
 } from "@/lib/hailMaryPhysics";
+
+// The quarterback stands just left of the release point so his head never
+// covers the ball. Everything else about him is drawn off these three numbers.
+const QB_X = 88;
+const QB_SHOULDER = GROUND_Y - 68;
+const HEAD_R = 52;
+
+// Decoded once for the life of the page. Until it is ready the head renders as
+// a plain circle, so a slow decode can never leave a hole in the sprite.
+let headImg = null;
+function qbHead() {
+  if (headImg) return headImg;
+  if (typeof window === "undefined") return null;
+  headImg = new window.Image();
+  headImg.src = QB_HEAD_SRC;
+  return headImg;
+}
 
 export default function HailMaryGame() {
   const canvasRef = useRef(null);
@@ -195,8 +212,8 @@ export default function HailMaryGame() {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-500">
-          Drag back from the uprights and let go. Knock every star down before
-          you run out of footballs.
+          Drag back from the quarterback and let go. Knock every star down
+          before you run out of footballs — the helmets explode.
         </p>
         <div className="flex gap-2">
           {LEVELS.map((l, i) => (
@@ -260,25 +277,18 @@ function draw(ctx, cssW, w) {
     ctx.stroke();
   }
 
-  // uprights, doubling as the slingshot
-  ctx.strokeStyle = "#f7d154";
-  ctx.lineWidth = 7;
-  ctx.beginPath();
-  ctx.moveTo(SLING.x, GROUND_Y);
-  ctx.lineTo(SLING.x, SLING.y - 4);
-  ctx.moveTo(SLING.x - 34, SLING.y - 4);
-  ctx.lineTo(SLING.x + 34, SLING.y - 4);
-  ctx.moveTo(SLING.x - 34, SLING.y - 4);
-  ctx.lineTo(SLING.x - 34, SLING.y - 58);
-  ctx.moveTo(SLING.x + 34, SLING.y - 4);
-  ctx.lineTo(SLING.x + 34, SLING.y - 58);
-  ctx.stroke();
+  const hand = w.drag ? pull(w.drag) : { px: SLING.x, py: SLING.y };
+  drawQB(ctx, hand);
 
   for (const b of w.blocks) {
     if (b.dead) continue;
     const m = MATERIALS[b.kind];
     if (b.kind === "star") {
       drawStar(ctx, b.x, b.y, 19, m.fill);
+      continue;
+    }
+    if (b.kind === "helmet") {
+      drawHelmet(ctx, b);
       continue;
     }
     const wear = Math.max(0, Math.min(1, b.hp / b.maxHp));
@@ -291,35 +301,28 @@ function draw(ctx, cssW, w) {
     ctx.strokeRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
   }
 
-  if (w.drag) {
-    const { px, py } = pull(w.drag);
-    ctx.strokeStyle = "rgba(255,255,255,0.45)";
-    ctx.lineWidth = 3;
+  for (const bl of w.blasts) {
+    const k = bl.t / bl.max;
+    ctx.globalAlpha = Math.max(0, 1 - k);
+    ctx.strokeStyle = "#ffb020";
+    ctx.lineWidth = 7 * (1 - k) + 1;
     ctx.beginPath();
-    ctx.moveTo(SLING.x - 30, SLING.y - 10);
-    ctx.lineTo(px, py);
-    ctx.lineTo(SLING.x + 30, SLING.y - 10);
+    ctx.arc(bl.x, bl.y, bl.r * k, 0, Math.PI * 2);
     ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 
+  if (w.drag) {
+    const { px, py } = hand;
     const vx = (SLING.x - px) * POWER;
     const vy = (SLING.y - py) * POWER;
-    ctx.fillStyle = "rgba(255,255,255,0.5)";
-    for (let i = 1; i <= 16; i++) {
-      const t = i * 0.055;
-      const dx = px + vx * t;
-      const dy = py + vy * t + 0.5 * GRAVITY * t * t;
-      if (dy > GROUND_Y) break;
-      ctx.beginPath();
-      ctx.arc(dx, dy, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
     drawBall(ctx, px, py, Math.atan2(vy, vx));
   }
 
   if (w.ball) {
     drawBall(ctx, w.ball.x, w.ball.y, Math.atan2(w.ball.vy, w.ball.vx));
   } else if (!w.drag && w.status === "aim" && w.ballsLeft > 0) {
-    drawBall(ctx, SLING.x, SLING.y - 14, -0.35);
+    drawBall(ctx, SLING.x, SLING.y, -0.35);
   }
 
   for (const p of w.particles) {
@@ -340,6 +343,104 @@ function pull(drag) {
     dy = (dy / d) * MAX_PULL;
   }
   return { px: SLING.x + dx, py: SLING.y + dy };
+}
+
+// The commissioner: normal-sized quarterback, absurd head. The throwing arm
+// tracks wherever the ball is being pulled to, so he winds up as you drag.
+function drawQB(ctx, hand) {
+  const headY = QB_SHOULDER - HEAD_R + 4;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(QB_X, GROUND_Y + 3, 34, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#1b2a3d";
+  ctx.lineCap = "round";
+  ctx.lineWidth = 10;
+  ctx.beginPath();
+  ctx.moveTo(QB_X - 4, GROUND_Y - 34);
+  ctx.lineTo(QB_X - 16, GROUND_Y - 2);
+  ctx.moveTo(QB_X + 4, GROUND_Y - 34);
+  ctx.lineTo(QB_X + 18, GROUND_Y - 2);
+  ctx.stroke();
+
+  // jersey
+  ctx.fillStyle = "#0057B8";
+  ctx.fillRect(QB_X - 15, QB_SHOULDER, 30, GROUND_Y - 32 - QB_SHOULDER);
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = "600 14px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("1", QB_X, QB_SHOULDER + 22);
+
+  // off arm out front for balance, throwing arm back to the ball
+  ctx.strokeStyle = "#e6b79c";
+  ctx.lineWidth = 8;
+  ctx.beginPath();
+  ctx.moveTo(QB_X + 12, QB_SHOULDER + 6);
+  ctx.lineTo(QB_X + 42, QB_SHOULDER + 2);
+  ctx.moveTo(QB_X + 12, QB_SHOULDER + 4);
+  ctx.lineTo(hand.px, hand.py);
+  ctx.stroke();
+
+  const img = qbHead();
+  const ready = img && img.complete && img.naturalWidth > 0;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(QB_X, headY, HEAD_R, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  if (ready) {
+    ctx.drawImage(img, QB_X - HEAD_R, headY - HEAD_R, HEAD_R * 2, HEAD_R * 2);
+  } else {
+    ctx.fillStyle = "#e6b79c";
+    ctx.fillRect(QB_X - HEAD_R, headY - HEAD_R, HEAD_R * 2, HEAD_R * 2);
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = "#f7d154";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(QB_X, headY, HEAD_R, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHelmet(ctx, b) {
+  const half = b.w / 2;
+  const r = b.h / 2;
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.shadowColor = "rgba(255,90,31,0.85)";
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = "#c8102e";
+  ctx.beginPath();
+  ctx.ellipse(0, -1, half * 0.88, r, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = "#f4f1ea";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(-half * 0.6, -r + 4);
+  ctx.lineTo(half * 0.35, -r + 3);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#d8dde3";
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(half * 0.3, -3);
+  ctx.lineTo(half * 0.88, 3);
+  ctx.lineTo(half * 0.72, r - 2);
+  ctx.lineTo(0, r - 2);
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffd166";
+  ctx.beginPath();
+  ctx.arc(-half * 0.45, -3, 3.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawBall(ctx, x, y, angle) {

@@ -13,10 +13,15 @@ export const metadata = {
   description: `${BRAND.full}. ${LEAGUE.tagline}.`,
 };
 
+// Runs before the first paint so a dark-mode reader never gets a white flash.
+// Their own choice wins; otherwise we follow the device.
+const themeInit = `(function(){try{var t=localStorage.getItem('hspn-theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
+
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           rel="preconnect"

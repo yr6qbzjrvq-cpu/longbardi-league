@@ -80,13 +80,14 @@ export default function HailMaryGame() {
     let last = performance.now();
     let acc = 0;
 
+    // CSS owns the shape (aspect-[1000/600]); this only keeps the backing
+    // store sharp. Setting style.height here instead would re-trigger the
+    // ResizeObserver and Chrome would drop the follow-up notification, which
+    // left the canvas squashed after a rotation or a width change.
     const resize = () => {
-      const cssW = canvas.clientWidth;
-      const cssH = cssW * (WORLD_H / WORLD_W);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.round(cssW * dpr);
-      canvas.height = Math.round(cssH * dpr);
-      canvas.style.height = `${cssH}px`;
+      canvas.width = Math.round(canvas.clientWidth * dpr);
+      canvas.height = Math.round(canvas.clientHeight * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
@@ -154,7 +155,7 @@ export default function HailMaryGame() {
           onPointerMove={onMove}
           onPointerUp={onUp}
           onPointerCancel={onUp}
-          className="block w-full"
+          className="block w-full aspect-[1000/600]"
           style={{ touchAction: "none" }}
         />
 

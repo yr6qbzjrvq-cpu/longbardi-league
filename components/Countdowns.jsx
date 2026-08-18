@@ -181,7 +181,7 @@ function BirthdayBar() {
       href={GIFT_LIST_URL}
       target="_blank"
       rel="noopener noreferrer"
-      className="relative block cursor-default overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50"
+      className="relative block cursor-default overflow-hidden rounded-md border border-gray-200 bg-gradient-to-r from-amber-50 via-white to-rose-50 dark:from-[#2a2113] dark:via-[#161c24] dark:to-[#2a1618]"
     >
       <div
         aria-hidden="true"

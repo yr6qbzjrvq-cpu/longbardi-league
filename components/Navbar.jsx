@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ThemeToggle from "@/components/ThemeToggle";
 import { BRAND, PICKEM_PUBLIC } from "@/lib/leagueData";
 
 const LINKS = [
@@ -75,19 +76,23 @@ export default function Navbar() {
           })}
         </nav>
 
-        <button
-          onClick={() => setOpen(!open)}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded text-gray-300 hover:text-white md:hidden"
-          aria-label="Toggle menu"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            {open ? (
-              <path d="M6 6l12 12M18 6L6 18" />
-            ) : (
-              <path d="M4 7h16M4 12h16M4 17h16" />
-            )}
-          </svg>
-        </button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+
+          <button
+            onClick={() => setOpen(!open)}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded text-gray-300 hover:text-white md:hidden"
+            aria-label="Toggle menu"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              {open ? (
+                <path d="M6 6l12 12M18 6L6 18" />
+              ) : (
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              )}
+            </svg>
+          </button>
+        </div>
       </div>
 
       {open && (

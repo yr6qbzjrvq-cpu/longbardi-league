@@ -67,3 +67,141 @@ body {
 .article-body td {
   @apply border-b border-gray-200 py-2 pr-4;
 }
+
+/* ==========================================================================
+   Dark mode
+
+   The site is written in light-mode Tailwind utilities. Rather than adding a
+   dark: variant to every element in every file, the handful of neutral
+   utilities actually in use are remapped here when <html> carries .dark.
+
+   Deliberately NOT remapped: text-gray-300, text-white, bg-nav, bg-espn.
+   Those already sit on the dark navbar and footer and are correct as-is.
+   Commissioner Mode paints its own colours and is untouched by all of this.
+   ========================================================================== */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background-color: #0f141a;
+  color: #d7e0e8;
+}
+
+/* Surfaces */
+.dark .bg-white {
+  background-color: #161c24;
+}
+.dark .bg-gray-50 {
+  background-color: #131922;
+}
+.dark .bg-gray-100 {
+  background-color: #1b222b;
+}
+.dark .hover\:bg-gray-100:hover {
+  background-color: #1b222b;
+}
+
+/* Borders */
+.dark .border-gray-100 {
+  border-color: #212a34;
+}
+.dark .border-gray-200 {
+  border-color: #26303b;
+}
+.dark .border-gray-300 {
+  border-color: #33404e;
+}
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #26303b;
+}
+
+/* Type */
+.dark .text-gray-900 {
+  color: #e8eef4;
+}
+.dark .text-gray-800 {
+  color: #d7e0e8;
+}
+.dark .text-gray-700 {
+  color: #c2ccd6;
+}
+.dark .text-gray-600 {
+  color: #aab5c0;
+}
+.dark .text-gray-500 {
+  color: #909caa;
+}
+.dark .text-gray-400 {
+  color: #7c8794;
+}
+
+/* Brand blue is too dark to read on a dark surface */
+.dark .text-espn,
+.dark .text-link {
+  color: #6aa9ff;
+}
+.dark .hover\:text-espn:hover {
+  color: #8dbdff;
+}
+
+/* Form controls */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: #161c24;
+  color: #e8eef4;
+}
+
+/* Status tints: preview banners, right/wrong picks */
+.dark .bg-amber-50 {
+  background-color: #2a2113;
+}
+.dark .border-amber-300 {
+  border-color: #5c4720;
+}
+.dark .text-amber-900 {
+  color: #f0d9a8;
+}
+.dark .bg-green-50 {
+  background-color: #12251a;
+}
+.dark .text-green-700 {
+  color: #74d69a;
+}
+.dark .bg-red-50 {
+  background-color: #2a1618;
+}
+.dark .text-red-600 {
+  color: #f08c8c;
+}
+
+/* Article body colours come from @apply, so they need naming again */
+.dark .article-body,
+.dark .article-body p {
+  color: #cbd5e0;
+}
+.dark .article-body h1,
+.dark .article-body h2,
+.dark .article-body h3,
+.dark .article-body strong {
+  color: #e8eef4;
+}
+.dark .article-body a {
+  color: #6aa9ff;
+}
+.dark .article-body blockquote {
+  color: #909caa;
+}
+.dark .article-body code,
+.dark .article-body pre {
+  background-color: #1b222b;
+}
+.dark .article-body hr,
+.dark .article-body td {
+  border-color: #26303b;
+}
+.dark .article-body th {
+  color: #909caa;
+  border-color: #33404e;
+}

@@ -68,13 +68,19 @@ export default async function AdminPage() {
           >
             Upload Image
           </Link>
-          {/* Not an admin screen — the game itself, which is still gated to
-              you until HAILMARY_PUBLIC flips. */}
+          {/* Not admin screens — the games themselves, still gated to you
+              until their flags flip. */}
           <Link
             href="/hail-mary"
             className="rounded-md border border-espn px-6 py-2 font-display uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
           >
             Hail Mary
+          </Link>
+          <Link
+            href="/deep-threat"
+            className="rounded-md border border-espn px-6 py-2 font-display uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+          >
+            Deep Threat
           </Link>
           <Link
             href="/admin/pickem"

@@ -8,6 +8,9 @@ import {
   CATCH_R,
   CHEST_Y,
   GOAL_X,
+  WALL_TOP,
+  WALL_W,
+  WALL_X,
   canThrow,
   createGame,
   launch,
@@ -271,8 +274,9 @@ export default function DeepThreatGame({ names }) {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-500">
-          One throw per receiver. Lead him — the ball has to come down on him
-          before he crosses the goal line. {status}.
+          One throw per receiver. Loft it over the wall and lead him — the
+          ball has to come down on him before he crosses the goal line.{" "}
+          {status}.
         </p>
       </div>
 
@@ -370,6 +374,20 @@ function draw(ctx, cssW, g) {
   ctx.lineTo(GOAL_X - 26, GROUND_Y - 196);
   ctx.moveTo(GOAL_X + 26, GROUND_Y - 150);
   ctx.lineTo(GOAL_X + 26, GROUND_Y - 196);
+  ctx.stroke();
+
+  // the offensive line: a brick wall the throw has to clear
+  const wl = WALL_X - WALL_W / 2;
+  ctx.fillStyle = "#8a94a0";
+  ctx.fillRect(wl, WALL_TOP, WALL_W, GROUND_Y - WALL_TOP);
+  ctx.strokeStyle = "#6b747e";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(wl, WALL_TOP, WALL_W, GROUND_Y - WALL_TOP);
+  ctx.beginPath();
+  for (let y = WALL_TOP + 18; y < GROUND_Y; y += 18) {
+    ctx.moveTo(wl, y);
+    ctx.lineTo(wl + WALL_W, y);
+  }
   ctx.stroke();
 
   const hand = g.drag ? pull(g.drag) : { px: SLING.x, py: SLING.y };

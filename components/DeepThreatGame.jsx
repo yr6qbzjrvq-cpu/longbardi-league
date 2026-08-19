@@ -5,6 +5,7 @@ import { GROUND_Y, WORLD_H, WORLD_W } from "@/lib/hailMaryLevels";
 import { POWER, SLING, STEP } from "@/lib/hailMaryPhysics";
 import { drawBall, drawQB, pull } from "@/lib/qbSprite";
 import {
+  BACK_X,
   CATCH_R,
   CHEST_Y,
   GOAL_X,
@@ -375,6 +376,14 @@ function draw(ctx, cssW, g) {
   ctx.moveTo(GOAL_X + 26, GROUND_Y - 150);
   ctx.lineTo(GOAL_X + 26, GROUND_Y - 196);
   ctx.stroke();
+
+  // padded wall at the back of the end zone — balls die against it
+  ctx.fillStyle = "#c8102e";
+  ctx.fillRect(BACK_X, GROUND_Y - 92, WORLD_W - BACK_X + 40, 92);
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  for (let y = GROUND_Y - 92; y < GROUND_Y; y += 23) {
+    ctx.fillRect(BACK_X, y, WORLD_W - BACK_X + 40, 3);
+  }
 
   // the offensive line: a brick wall the throw has to clear
   const wl = WALL_X - WALL_W / 2;

@@ -25,7 +25,7 @@ export default function DeepThreatGame({ names }) {
   const canvasRef = useRef(null);
   const game = useRef(null);
   const [hud, setHud] = useState({
-    streak: 0,
+    points: 0,
     best: 0,
     name: "",
     phase: "live",
@@ -64,11 +64,11 @@ export default function DeepThreatGame({ names }) {
     loadBoard();
   }, [roster, loadBoard]);
 
-  const qualifies = (streak) => {
-    if (streak < 1) return false;
+  const qualifies = (points) => {
+    if (points < 1) return false;
     const list = board.current;
     if (list.length < 10) return true;
-    return streak > list[list.length - 1].streak;
+    return points > list[list.length - 1].streak;
   };
 
   // --- input --------------------------------------------------------------
@@ -132,9 +132,9 @@ export default function DeepThreatGame({ names }) {
         if (game.current) {
           const s = step(game.current);
           out = s;
-          if (s.event === "miss" && qualifies(s.lastStreak)) {
+          if (s.event === "miss" && qualifies(s.lastPoints)) {
             game.current.paused = true;
-            setPrompt({ streak: s.lastStreak });
+            setPrompt({ points: s.lastPoints });
             setEntry("");
           }
         }
@@ -142,14 +142,14 @@ export default function DeepThreatGame({ names }) {
       }
       if (out) {
         setHud((h) =>
-          h.streak === out.streak &&
+          h.points === out.points &&
           h.best === out.best &&
           h.name === out.name &&
           h.phase === out.phase &&
           h.canThrow === out.canThrow
             ? h
             : {
-                streak: out.streak,
+                points: out.points,
                 best: out.best,
                 name: out.name,
                 phase: out.phase,
@@ -177,7 +177,7 @@ export default function DeepThreatGame({ names }) {
       const res = await fetch(BOARD_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: entry, streak: prompt.streak }),
+        body: JSON.stringify({ name: entry, streak: prompt.points }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Couldn't save that.");
@@ -216,7 +216,7 @@ export default function DeepThreatGame({ names }) {
         </div>
         <div className="flex items-center gap-4">
           <p className="font-display text-xs uppercase tracking-widest text-gray-500">
-            Streak <span className="text-espn">{hud.streak}</span>
+            Points <span className="text-espn">{hud.points}</span>
           </p>
           <p className="font-display text-xs uppercase tracking-widest text-gray-500">
             Best <span className="text-gray-900">{hud.best}</span>
@@ -242,7 +242,7 @@ export default function DeepThreatGame({ names }) {
                 Top 10
               </p>
               <p className="mt-1 text-sm text-gray-200">
-                {prompt.streak} in a row. Put a name on it.
+                {prompt.points} points. Put a name on it.
               </p>
             </div>
             <form onSubmit={submit} className="flex flex-wrap justify-center gap-2">
@@ -276,15 +276,15 @@ export default function DeepThreatGame({ names }) {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-500">
-          One throw per receiver, and he's got a man on him. Throw it quick
-          through the tight window, or wait for the separation and hit him
-          deep. {status}.
+          One throw per receiver, and he's got a man on him. Deeper catches
+          are worth more (10–50), but the defender gets a second wind past
+          midfield — and one incompletion wipes the total. {status}.
         </p>
       </div>
 
       <div className="mt-6">
         <h2 className="border-b-2 border-espn pb-2 font-display text-lg uppercase tracking-wide text-gray-900">
-          Top 10 Streaks
+          Top 10 Scores
         </h2>
         {boardError && (
           <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -293,7 +293,7 @@ export default function DeepThreatGame({ names }) {
         )}
         {scores.length === 0 && !boardError && (
           <p className="mt-3 text-sm text-gray-500">
-            Nobody on the board yet. First completion streak takes the top spot.
+            Nobody on the board yet. First scoring run takes the top spot.
           </p>
         )}
         {scores.length > 0 && (

@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 // The game runs in the browser, so a score arrives here on trust. The clamp
 // below is the only thing standing between the board and someone with the
 // dev tools open — worth knowing before this goes league-wide.
-const MAX_STREAK = 300;
+// Scores are now points (10-50 a catch), so the ceiling is roomier.
+const MAX_STREAK = 5000;
 const MAX_NAME = 18;
 
 async function topTen(supabase) {

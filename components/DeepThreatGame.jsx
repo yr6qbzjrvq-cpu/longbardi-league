@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GROUND_Y, WORLD_H, WORLD_W } from "@/lib/hailMaryLevels";
 import { POWER, SLING, STEP } from "@/lib/hailMaryPhysics";
 import { drawBall, drawQB, pull } from "@/lib/qbSprite";
+import { CHARACTERS } from "@/lib/deepThreatCharacters";
 import {
   BACK_X,
   CATCH_R,
@@ -37,6 +38,19 @@ export default function DeepThreatGame({ names }) {
   const [entry, setEntry] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Which head is throwing. The game sits paused behind the chooser until a
+  // character is picked; the decoded Image rides in a ref for the draw loop.
+  const [character, setCharacter] = useState(null);
+  const headRef = useRef(null);
+
+  const pickCharacter = (c) => {
+    const img = new window.Image();
+    img.src = c.src;
+    headRef.current = img;
+    setCharacter(c.id);
+    if (game.current) game.current.paused = false;
+  };
+
   // The board doubles as the qualifying bar, so it's kept in a ref for the
   // animation loop to read without re-subscribing every render.
   const board = useRef([]);
@@ -61,6 +75,8 @@ export default function DeepThreatGame({ names }) {
   const roster = names.join(",");
   useEffect(() => {
     game.current = createGame(roster.split(","));
+    // hold the opening snap until a quarterback has been chosen
+    if (!headRef.current) game.current.paused = true;
     loadBoard();
   }, [roster, loadBoard]);
 
@@ -158,7 +174,7 @@ export default function DeepThreatGame({ names }) {
         );
       }
       ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-      draw(ctx, canvas.clientWidth, game.current);
+      draw(ctx, canvas.clientWidth, game.current, headRef.current);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -234,6 +250,31 @@ export default function DeepThreatGame({ names }) {
           className="block w-full aspect-[1000/600]"
           style={{ touchAction: "none" }}
         />
+
+        {!character && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-black/70 px-6 text-center">
+            <p className="font-display text-3xl uppercase tracking-wide text-white">
+              Choose your quarterback
+            </p>
+            <div className="flex flex-wrap items-end justify-center gap-4">
+              {CHARACTERS.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => pickCharacter(c)}
+                  className="rounded-lg border-2 border-white/25 bg-white/5 p-2 transition-all hover:border-espn hover:bg-white/15"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={c.src}
+                    alt="Quarterback option"
+                    className="h-20 w-auto sm:h-24"
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {prompt && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 text-center">
@@ -322,7 +363,7 @@ export default function DeepThreatGame({ names }) {
 }
 
 // --- drawing --------------------------------------------------------------
-function draw(ctx, cssW, g) {
+function draw(ctx, cssW, g, headImg) {
   if (!g) return;
   const s = cssW / WORLD_W;
 
@@ -401,7 +442,7 @@ function draw(ctx, cssW, g) {
   ctx.stroke();
 
   const hand = g.drag ? pull(g.drag) : { px: SLING.x, py: SLING.y };
-  drawQB(ctx, hand);
+  drawQB(ctx, hand, headImg);
 
   if (g.defender) drawDefender(ctx, g.defender, g.phase);
   if (g.receiver) drawReceiver(ctx, g.receiver, g.phase);

@@ -8,6 +8,7 @@ import {
   BACK_X,
   CATCH_R,
   CHEST_Y,
+  DEF_R,
   GOAL_X,
   WALL_TOP,
   WALL_W,
@@ -275,9 +276,9 @@ export default function DeepThreatGame({ names }) {
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gray-500">
-          One throw per receiver. Loft it over the wall and lead him — the
-          ball has to come down on him before he crosses the goal line.{" "}
-          {status}.
+          One throw per receiver, and he's got a man on him. Throw it quick
+          through the tight window, or wait for the separation and hit him
+          deep. {status}.
         </p>
       </div>
 
@@ -402,6 +403,7 @@ function draw(ctx, cssW, g) {
   const hand = g.drag ? pull(g.drag) : { px: SLING.x, py: SLING.y };
   drawQB(ctx, hand);
 
+  if (g.defender) drawDefender(ctx, g.defender, g.phase);
   if (g.receiver) drawReceiver(ctx, g.receiver, g.phase);
 
   for (const t of g.trail) {
@@ -439,6 +441,69 @@ function draw(ctx, cssW, g) {
     ctx.globalAlpha = 1;
   }
 
+  ctx.restore();
+}
+
+// Press coverage. Same build as the receiver but in road white, arms up,
+// with a faint red ring showing his reach — that ring is what you thread.
+function drawDefender(ctx, d, phase) {
+  const swing = Math.sin(d.stride / 15) * 11;
+  const top = GROUND_Y;
+
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.28)";
+  ctx.beginPath();
+  ctx.ellipse(d.x, GROUND_Y + 3, 20, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // legs
+  ctx.strokeStyle = "#2b3948";
+  ctx.lineCap = "round";
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(d.x, top - 26);
+  ctx.lineTo(d.x + swing, top - 2);
+  ctx.moveTo(d.x, top - 26);
+  ctx.lineTo(d.x - swing, top - 2);
+  ctx.stroke();
+
+  // jersey
+  ctx.fillStyle = "#e8e4dc";
+  ctx.fillRect(d.x - 11, top - 58, 22, 32);
+  ctx.fillStyle = "rgba(20,30,42,0.9)";
+  ctx.font = "600 12px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("0", d.x, top - 36);
+
+  // arms up, playing the ball
+  ctx.strokeStyle = "#e6b79c";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(d.x - 8, top - 54);
+  ctx.lineTo(d.x - 15, top - 80);
+  ctx.moveTo(d.x + 8, top - 54);
+  ctx.lineTo(d.x + 15, top - 80);
+  ctx.stroke();
+
+  // helmet
+  ctx.fillStyle = "#e8e4dc";
+  ctx.beginPath();
+  ctx.arc(d.x, top - 68, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#8a94a0";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(d.x + 6, top - 66);
+  ctx.lineTo(d.x + 12, top - 62);
+  ctx.stroke();
+
+  if (phase === "live") {
+    ctx.strokeStyle = "rgba(200,16,46,0.28)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(d.x, CHEST_Y, DEF_R, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 

@@ -151,8 +151,14 @@ export default function MinesweeperGame() {
       setCellPx(Math.max(10, Math.min(30, size)));
     }
     measure();
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined" && boardWrapRef.current) {
+      ro = new ResizeObserver(measure);
+      ro.observe(boardWrapRef.current);
+    }
     window.addEventListener("resize", measure);
     return function () {
+      if (ro) ro.disconnect();
       window.removeEventListener("resize", measure);
     };
   }, [diffIndex]);

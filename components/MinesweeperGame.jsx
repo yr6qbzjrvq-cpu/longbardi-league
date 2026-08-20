@@ -118,6 +118,14 @@ export default function MinesweeperGame() {
   const [seconds, setSeconds] = useState(0);
   const longPressTimer = useRef(null);
   const suppressClick = useRef(false);
+  const boardWrapRef = useRef(null);
+  const [cellPx, setCellPx] = useState(30);
+  const [boards, setBoards] = useState(null);
+  const [boardTab, setBoardTab] = useState("rookie");
+  const [pendingScore, setPendingScore] = useState(null);
+  const [playerName, setPlayerName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [lbError, setLbError] = useState("");
 
   const diff = DIFFICULTIES[diffIndex];
 
@@ -132,6 +140,37 @@ export default function MinesweeperGame() {
       clearInterval(id);
     };
   }, [status]);
+
+  useEffect(function () {
+    function measure() {
+      const el = boardWrapRef.current;
+      if (!el) return;
+      const d = DIFFICULTIES[diffIndex];
+      const avail = el.clientWidth - 6;
+      const size = Math.floor((avail - (d.cols - 1)) / d.cols);
+      setCellPx(Math.max(10, Math.min(30, size)));
+    }
+    measure();
+    window.addEventListener("resize", measure);
+    return function () {
+      window.removeEventListener("resize", measure);
+    };
+  }, [diffIndex]);
+
+  useEffect(function () {
+    try {
+      const stored = window.localStorage.getItem("hspn-minesweeper-name");
+      if (stored) setPlayerName(stored);
+    } catch (e) {}
+    fetch("/api/minesweeper/leaderboard")
+      .then(function (res) {
+        return res.ok ? res.json() : null;
+      })
+      .then(function (json) {
+        if (json && json.boards) setBoards(json.boards);
+      })
+      .catch(function () {});
+  }, []);
 
   let flagCount = 0;
   board.forEach(function (row) {
@@ -149,6 +188,9 @@ export default function MinesweeperGame() {
     setMinesPlaced(false);
     setStatus("idle");
     setSeconds(0);
+    setPendingScore(null);
+    setLbError("");
+    setBoardTab(d.id);
   }
 
   function revealAt(r, c) {
@@ -190,6 +232,10 @@ export default function MinesweeperGame() {
       });
       setBoard(next);
       setStatus("won");
+      const finalSecs = Math.max(1, seconds);
+      if (qualifies(diff.id, finalSecs)) {
+        setPendingScore({ difficulty: diff.id, seconds: finalSecs });
+      }
       return;
     }
     setBoard(next);
@@ -259,6 +305,10 @@ export default function MinesweeperGame() {
       });
       setBoard(next);
       setStatus("won");
+      const finalSecs = Math.max(1, seconds);
+      if (qualifies(diff.id, finalSecs)) {
+        setPendingScore({ difficulty: diff.id, seconds: finalSecs });
+      }
       return;
     }
     setBoard(next);
@@ -278,6 +328,55 @@ export default function MinesweeperGame() {
     }
   }
 
+  function qualifies(difficultyId, secs) {
+    if (!boards) return true;
+    const list = boards[difficultyId] || [];
+    if (list.length < 10) return true;
+    return secs < list[list.length - 1].seconds;
+  }
+
+  function submitScore() {
+    if (!pendingScore || submitting) return;
+    const name = playerName.trim().slice(0, 24);
+    if (!name) {
+      setLbError("Enter a name for the board.");
+      return;
+    }
+    setSubmitting(true);
+    setLbError("");
+    fetch("/api/minesweeper/leaderboard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: name,
+        difficulty: pendingScore.difficulty,
+        seconds: pendingScore.seconds,
+      }),
+    })
+      .then(function (res) {
+        return res.json().then(function (json) {
+          return { ok: res.ok, json: json };
+        });
+      })
+      .then(function (out) {
+        if (!out.ok) {
+          throw new Error((out.json && out.json.error) || "Could not save your time.");
+        }
+        if (out.json.boards) setBoards(out.json.boards);
+        setBoardTab(pendingScore.difficulty);
+        setPendingScore(null);
+        try {
+          window.localStorage.setItem("hspn-minesweeper-name", name);
+        } catch (e) {}
+      })
+      .catch(function (err) {
+        setLbError(err.message);
+      })
+      .finally(function () {
+        setSubmitting(false);
+      });
+  }
+
   function cellFace(cell) {
     if (status === "lost" && cell.flagged && !cell.mine) return "\u274C";
     if (!cell.revealed) return cell.flagged ? "\uD83D\uDEA9" : "";
@@ -287,7 +386,7 @@ export default function MinesweeperGame() {
 
   function cellClasses(cell) {
     const base =
-      "flex h-[1.9rem] w-[1.9rem] touch-manipulation items-center justify-center text-sm font-bold leading-none focus:outline-none ";
+      "flex touch-manipulation items-center justify-center font-bold leading-none focus:outline-none ";
     if (cell.revealed) {
       if (cell.boom) return base + "bg-red-500 text-white";
       return base + "bg-gray-100 dark:bg-gray-800 " + (cell.mine ? "" : NUMBER_COLORS[cell.adj]);
@@ -358,14 +457,45 @@ export default function MinesweeperGame() {
       )}
       {status === "won" && (
         <div className="mb-3 max-w-md rounded-md border border-green-300 bg-green-50 px-4 py-2 text-sm text-green-800 dark:border-green-700 dark:bg-green-950 dark:text-green-200">
-          <strong>Field cleared in {seconds}s.</strong> The commissioner remains undefeated.
+          <strong>Field cleared in {seconds}s.</strong>{" "}
+          {pendingScore
+            ? "That cracks the top ten - claim your spot."
+            : "Not a top-ten time, but the field is clear."}
+          {pendingScore && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={playerName}
+                maxLength={24}
+                placeholder="Your name"
+                onChange={function (e) {
+                  setPlayerName(e.target.value);
+                }}
+                onKeyDown={function (e) {
+                  if (e.key === "Enter") submitScore();
+                }}
+                className="rounded-md border border-green-400 bg-white px-2 py-1 text-sm text-gray-900 focus:border-espn focus:outline-none dark:border-green-700 dark:bg-gray-900 dark:text-gray-100"
+              />
+              <button
+                type="button"
+                onClick={submitScore}
+                disabled={submitting}
+                className="rounded-md border border-espn bg-espn px-3 py-1 font-display text-sm uppercase tracking-widest text-white transition-colors hover:bg-espn-dark disabled:opacity-50"
+              >
+                {submitting ? "Saving..." : "Post time"}
+              </button>
+            </div>
+          )}
+          {lbError && (
+            <p className="mt-1 text-xs text-red-600 dark:text-red-400">{lbError}</p>
+          )}
         </div>
       )}
 
-      <div className="overflow-x-auto pb-2">
+      <div ref={boardWrapRef} className="pb-2">
         <div
           className="inline-grid gap-px rounded-md border-2 border-gray-400 bg-gray-400 p-px dark:border-gray-600 dark:bg-gray-600"
-          style={{ gridTemplateColumns: "repeat(" + diff.cols + ", 1.9rem)" }}
+          style={{ gridTemplateColumns: "repeat(" + diff.cols + ", " + cellPx + "px)" }}
           onContextMenu={function (e) {
             e.preventDefault();
           }}
@@ -378,6 +508,11 @@ export default function MinesweeperGame() {
                   type="button"
                   aria-label={"Cell " + (r + 1) + "," + (c + 1)}
                   className={cellClasses(cell)}
+                  style={{
+                    width: cellPx,
+                    height: cellPx,
+                    fontSize: Math.max(8, Math.floor(cellPx / 2)),
+                  }}
                   onMouseDown={function () {
                     suppressClick.current = false;
                   }}
@@ -421,6 +556,65 @@ export default function MinesweeperGame() {
         squares. Click a number whose flags all match to clear the rest of its
         neighbors. Your first click is always safe.
       </p>
+
+      <div className="mt-8 max-w-md">
+        <h2 className="mb-3 border-b-2 border-espn pb-2 font-display text-xl font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100">
+          Top 10 Times
+        </h2>
+        <div className="mb-3 flex gap-2">
+          {DIFFICULTIES.map(function (d) {
+            return (
+              <button
+                key={d.id}
+                type="button"
+                onClick={function () {
+                  setBoardTab(d.id);
+                }}
+                className={
+                  "rounded-md border px-3 py-1 font-display text-xs uppercase tracking-widest transition-colors " +
+                  (boardTab === d.id
+                    ? "border-espn bg-espn text-white"
+                    : "border-gray-300 text-gray-600 hover:border-espn hover:text-espn dark:border-gray-600 dark:text-gray-300")
+                }
+              >
+                {d.label}
+              </button>
+            );
+          })}
+        </div>
+        {!boards && (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            The leaderboard is warming up...
+          </p>
+        )}
+        {boards && (boards[boardTab] || []).length === 0 && (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No times yet. The board is wide open.
+          </p>
+        )}
+        {boards && (boards[boardTab] || []).length > 0 && (
+          <ol className="divide-y divide-gray-200 rounded-md border border-gray-300 dark:divide-gray-700 dark:border-gray-600">
+            {(boards[boardTab] || []).map(function (row, i) {
+              return (
+                <li
+                  key={i}
+                  className="flex items-center justify-between px-3 py-1.5 text-sm"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="w-5 font-display text-gray-400">{i + 1}</span>
+                    <span className="font-medium text-gray-900 dark:text-gray-100">
+                      {row.name}
+                    </span>
+                  </span>
+                  <span className="font-mono text-espn dark:text-blue-400">
+                    {row.seconds}s
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
     </div>
   );
 }

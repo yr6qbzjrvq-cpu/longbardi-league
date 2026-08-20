@@ -205,6 +205,65 @@ export default function MinesweeperGame() {
     if (status === "idle") setStatus("playing");
   }
 
+  function chordAt(r, c) {
+    if (status === "won" || status === "lost") return;
+    const cell = board[r][c];
+    if (!cell.revealed || cell.adj === 0) return;
+    const rows = board.length;
+    const cols = board[0].length;
+    const around = neighborsOf(rows, cols, r, c);
+    let flaggedNear = 0;
+    around.forEach(function (p) {
+      if (board[p[0]][p[1]].flagged) flaggedNear += 1;
+    });
+    if (flaggedNear !== cell.adj) return;
+    const targets = around.filter(function (p) {
+      const x = board[p[0]][p[1]];
+      return !x.flagged && !x.revealed;
+    });
+    if (targets.length === 0) return;
+    const next = cloneBoard(board);
+    let hitMine = false;
+    targets.forEach(function (p) {
+      const x = next[p[0]][p[1]];
+      if (x.mine) {
+        hitMine = true;
+        x.boom = true;
+        x.revealed = true;
+      }
+    });
+    if (hitMine) {
+      next.forEach(function (row) {
+        row.forEach(function (x) {
+          if (x.mine) x.revealed = true;
+        });
+      });
+      setBoard(next);
+      setStatus("lost");
+      return;
+    }
+    targets.forEach(function (p) {
+      floodReveal(next, p[0], p[1]);
+    });
+    let hiddenSafe = 0;
+    next.forEach(function (row) {
+      row.forEach(function (x) {
+        if (!x.mine && !x.revealed) hiddenSafe += 1;
+      });
+    });
+    if (hiddenSafe === 0) {
+      next.forEach(function (row) {
+        row.forEach(function (x) {
+          if (x.mine) x.flagged = true;
+        });
+      });
+      setBoard(next);
+      setStatus("won");
+      return;
+    }
+    setBoard(next);
+  }
+
   function pressFlag(r, c) {
     if (suppressClick.current) return;
     suppressClick.current = true;
@@ -327,7 +386,8 @@ export default function MinesweeperGame() {
                       suppressClick.current = false;
                       return;
                     }
-                    if (flagMode) toggleFlag(r, c);
+                    if (cell.revealed) chordAt(r, c);
+                    else if (flagMode) toggleFlag(r, c);
                     else revealAt(r, c);
                   }}
                   onContextMenu={function (e) {
@@ -358,7 +418,8 @@ export default function MinesweeperGame() {
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
         Click or tap to reveal a square. Right-click, long-press, or switch on flag
         mode to plant a flag. Numbers count the mines in the surrounding eight
-        squares. Your first click is always safe.
+        squares. Click a number whose flags all match to clear the rest of its
+        neighbors. Your first click is always safe.
       </p>
     </div>
   );

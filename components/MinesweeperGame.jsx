@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 const DIFFICULTIES = [
   { id: "rookie", label: "Rookie", rows: 9, cols: 9, mines: 10 },
@@ -20,7 +20,7 @@ const NUMBER_COLORS = [
   "text-gray-500 dark:text-gray-400",
 ];
 
-const LONG_PRESS_MS = 400;
+const LONG_PRESS_MS = 320;
 
 function makeBoard(rows, cols) {
   const board = [];
@@ -93,6 +93,28 @@ function floodReveal(board, startR, startC) {
   }
 }
 
+// Rendering one memoized component per square means a click only re-renders
+// the squares that actually changed - on Legend that is the difference
+// between updating a handful of DOM nodes and rebuilding 480 of them.
+const CellButton = memo(function CellButton(props) {
+  return (
+    <button
+      type="button"
+      data-r={props.r}
+      data-c={props.c}
+      aria-label={"Cell " + (props.r + 1) + "," + (props.c + 1)}
+      className={props.cls}
+      style={{
+        width: props.cellPx,
+        height: props.cellPx,
+        fontSize: Math.max(8, Math.floor(props.cellPx / 2)),
+      }}
+    >
+      {props.face}
+    </button>
+  );
+});
+
 function cloneBoard(board) {
   return board.map(function (row) {
     return row.map(function (cell) {
@@ -118,6 +140,7 @@ export default function MinesweeperGame() {
   const [seconds, setSeconds] = useState(0);
   const longPressTimer = useRef(null);
   const suppressClick = useRef(false);
+  const touchInfo = useRef(null);
   const boardWrapRef = useRef(null);
   const [cellPx, setCellPx] = useState(30);
   const [boards, setBoards] = useState(null);
@@ -323,6 +346,9 @@ export default function MinesweeperGame() {
   function pressFlag(r, c) {
     if (suppressClick.current) return;
     suppressClick.current = true;
+    setTimeout(function () {
+      suppressClick.current = false;
+    }, 500);
     toggleFlag(r, c);
     if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
   }
@@ -381,6 +407,28 @@ export default function MinesweeperGame() {
       .finally(function () {
         setSubmitting(false);
       });
+  }
+
+  function cellAt(e) {
+    const el =
+      e.target && e.target.closest ? e.target.closest("button[data-r]") : null;
+    if (!el) return null;
+    return {
+      r: parseInt(el.getAttribute("data-r"), 10),
+      c: parseInt(el.getAttribute("data-c"), 10),
+    };
+  }
+
+  function act(r, c) {
+    if (board[r][c].revealed) {
+      chordAt(r, c);
+      return;
+    }
+    if (flagMode) {
+      toggleFlag(r, c);
+      return;
+    }
+    revealAt(r, c);
   }
 
   function cellFace(cell) {
@@ -502,54 +550,75 @@ export default function MinesweeperGame() {
         <div
           className="inline-grid gap-px rounded-md border-2 border-gray-400 bg-gray-400 p-px dark:border-gray-600 dark:bg-gray-600"
           style={{ gridTemplateColumns: "repeat(" + diff.cols + ", " + cellPx + "px)" }}
+          onClick={function (e) {
+            if (suppressClick.current) {
+              suppressClick.current = false;
+              return;
+            }
+            const p = cellAt(e);
+            if (p) act(p.r, p.c);
+          }}
           onContextMenu={function (e) {
             e.preventDefault();
+            clearLongPress();
+            const p = cellAt(e);
+            if (p) pressFlag(p.r, p.c);
+          }}
+          onTouchStart={function (e) {
+            if (e.touches.length > 1) {
+              clearLongPress();
+              touchInfo.current = null;
+              return;
+            }
+            const p = cellAt(e);
+            if (!p) return;
+            suppressClick.current = false;
+            const t = e.touches[0];
+            touchInfo.current = { r: p.r, c: p.c, x: t.clientX, y: t.clientY, moved: false };
+            clearLongPress();
+            longPressTimer.current = setTimeout(function () {
+              longPressTimer.current = null;
+              pressFlag(p.r, p.c);
+            }, LONG_PRESS_MS);
+          }}
+          onTouchMove={function (e) {
+            const info = touchInfo.current;
+            if (!info) return;
+            const t = e.touches[0];
+            if (Math.abs(t.clientX - info.x) > 10 || Math.abs(t.clientY - info.y) > 10) {
+              info.moved = true;
+              clearLongPress();
+            }
+          }}
+          onTouchEnd={function (e) {
+            const info = touchInfo.current;
+            touchInfo.current = null;
+            const pending = longPressTimer.current !== null;
+            clearLongPress();
+            if (!info || info.moved) return;
+            if (e.cancelable) e.preventDefault();
+            suppressClick.current = true;
+            setTimeout(function () {
+              suppressClick.current = false;
+            }, 500);
+            if (pending) act(info.r, info.c);
+          }}
+          onTouchCancel={function () {
+            touchInfo.current = null;
+            clearLongPress();
           }}
         >
           {board.map(function (row, r) {
             return row.map(function (cell, c) {
               return (
-                <button
+                <CellButton
                   key={r + "-" + c}
-                  type="button"
-                  aria-label={"Cell " + (r + 1) + "," + (c + 1)}
-                  className={cellClasses(cell)}
-                  style={{
-                    width: cellPx,
-                    height: cellPx,
-                    fontSize: Math.max(8, Math.floor(cellPx / 2)),
-                  }}
-                  onMouseDown={function () {
-                    suppressClick.current = false;
-                  }}
-                  onClick={function () {
-                    if (suppressClick.current) {
-                      suppressClick.current = false;
-                      return;
-                    }
-                    if (cell.revealed) chordAt(r, c);
-                    else if (flagMode) toggleFlag(r, c);
-                    else revealAt(r, c);
-                  }}
-                  onContextMenu={function (e) {
-                    e.preventDefault();
-                    clearLongPress();
-                    pressFlag(r, c);
-                  }}
-                  onTouchStart={function () {
-                    suppressClick.current = false;
-                    clearLongPress();
-                    longPressTimer.current = setTimeout(function () {
-                      longPressTimer.current = null;
-                      pressFlag(r, c);
-                    }, LONG_PRESS_MS);
-                  }}
-                  onTouchEnd={clearLongPress}
-                  onTouchMove={clearLongPress}
-                  onTouchCancel={clearLongPress}
-                >
-                  {cellFace(cell)}
-                </button>
+                  r={r}
+                  c={c}
+                  cls={cellClasses(cell)}
+                  face={cellFace(cell)}
+                  cellPx={cellPx}
+                />
               );
             });
           })}

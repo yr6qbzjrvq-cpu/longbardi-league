@@ -141,6 +141,7 @@ export default function MinesweeperGame() {
   const longPressTimer = useRef(null);
   const suppressClick = useRef(false);
   const touchInfo = useRef(null);
+  const lastFlag = useRef({ key: "", t: 0 });
   const boardWrapRef = useRef(null);
   const [cellPx, setCellPx] = useState(30);
   const [boards, setBoards] = useState(null);
@@ -343,12 +344,14 @@ export default function MinesweeperGame() {
     setBoard(next);
   }
 
+  // Guards only against the same flag being placed twice by the long-press
+  // timer and the contextmenu event firing together on one cell. Mouse play
+  // is never throttled - every right-click lands immediately.
   function pressFlag(r, c) {
-    if (suppressClick.current) return;
-    suppressClick.current = true;
-    setTimeout(function () {
-      suppressClick.current = false;
-    }, 500);
+    const key = r + "," + c;
+    const now = Date.now();
+    if (lastFlag.current.key === key && now - lastFlag.current.t < 300) return;
+    lastFlag.current = { key: key, t: now };
     toggleFlag(r, c);
     if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(30);
   }
@@ -600,7 +603,7 @@ export default function MinesweeperGame() {
             suppressClick.current = true;
             setTimeout(function () {
               suppressClick.current = false;
-            }, 500);
+            }, 350);
             if (pending) act(info.r, info.c);
           }}
           onTouchCancel={function () {

@@ -108,7 +108,10 @@ function Section({ title, children }) {
   );
 }
 
-export default function NeighborhoodAvatarCreator() {
+// onSaved (optional): called with the saved player record a
+// beat after a successful save — NeighborhoodClient uses it to
+// walk the player into the Town Square.
+export default function NeighborhoodAvatarCreator({ onSaved }) {
   const canvasRef = useRef(null);
   const [avatar, setAvatar] = useState(DEFAULT_AVATAR);
   const [username, setUsername] = useState("");
@@ -171,10 +174,13 @@ export default function NeighborhoodAvatarCreator() {
     }
     setError(null);
     setUsername(result.value);
-    savePlayer({ username: result.value, avatar });
+    const record = savePlayer({ username: result.value, avatar });
     setDirty(false);
     setSaved(true);
     setIsReturning(true);
+    // Hand off to the Town Square after a beat so the "Saved!"
+    // note is visible.
+    if (onSaved && record) setTimeout(() => onSaved(record), 600);
   }
 
   return (

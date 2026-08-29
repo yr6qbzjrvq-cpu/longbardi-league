@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// HSPNeighborhood — room engine (single player, milestone 3)
+// HSPNeighborhood — room engine (multiplayer, milestone 4)
 // ------------------------------------------------------------
 // Renders one room config from lib/neighborhood/rooms.js on a
 // <canvas>:
@@ -9,25 +9,30 @@
 //     theme or resolution changes → stable phone framerate)
 //   • click/tap-to-walk using lib/neighborhood/pathing (A* +
 //     line-of-sight smoothing), constant-speed movement
-//   • Y-depth sorting of props + player every frame
-//   • camera follow with room clamping, centered when the room
-//     fits the viewport
-//   • DPR-aware responsive sizing, dark/light palettes, door
-//     "opening soon" nudges
-// Milestone 4 drops other players into the same entity list —
-// the loop is already shaped for it.
+//   • realtime peers via lib/neighborhood/realtime: your own
+//     avatar walks INSTANTLY on the locally computed path
+//     while the destination goes to /api/neighborhood/move,
+//     which validates with the same pathing module and
+//     broadcasts; peers are rendered DETERMINISTICALLY from
+//     (x, y, path, startedAt) + the server clock, so a hidden
+//     tab or a late joiner lands on the exact same positions
+//   • Y-depth sorting of props + every player each frame
+//   • camera follow with room clamping, DPR-aware sizing,
+//     dark/light palettes, door "opening soon" nudges
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
 import { drawAvatar, normalizeAvatar } from "@/lib/neighborhoodAvatar";
 import { getRoom } from "@/lib/neighborhood/rooms";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
+import { WALK_SPEED, advanceAlongPath } from "@/lib/neighborhood/movement";
+import { joinRoom } from "@/lib/neighborhood/realtime";
 
-const WALK_SPEED = 200; // world px/sec — constant, no easing
 const AVATAR_SCALE = 0.92; // world size of players in rooms
 const MIN_ZOOM = 0.55; // keep avatars readable on small phones
 const MAX_ZOOM = 1;
 const SIZE_FACTOR = { short: 0.86, medium: 1, tall: 1.14 }; // mirrors drawAvatar
+const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
 
 // Camera offset for one axis: follow the player, clamp to the
 // room, center (negative offset) when the room fits the view.
@@ -62,13 +67,18 @@ function ensureBg(s, theme) {
   s.bgKey = key;
 }
 
-function drawNameTag(ctx, name, x, y) {
+function tagYFor(avatar, y) {
+  const size = (avatar && avatar.body && avatar.body.size) || "medium";
+  return y - (150 * (SIZE_FACTOR[size] || 1) + 16) * AVATAR_SCALE - 8;
+}
+
+function drawNameTag(ctx, name, x, y, self) {
   ctx.font = "600 13px Inter, system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const w = ctx.measureText(name).width + 18;
   roundRectPath(ctx, x - w / 2, y - 11, w, 22, 11);
-  ctx.fillStyle = "rgba(16,24,32,0.72)";
+  ctx.fillStyle = self ? "rgba(0,87,184,0.78)" : "rgba(16,24,32,0.72)";
   ctx.fill();
   ctx.fillStyle = "#ffffff";
   ctx.fillText(name, x, y + 0.5);
@@ -111,9 +121,10 @@ function drawScene(ctx, canvas, s, theme, t) {
   }
 
   // Y-depth sort: lower feet = closer to camera = drawn later.
-  // Milestone 4 pushes the other players into this same list.
+  // Props, every peer and ourselves all sort in ONE list.
   const ents = [];
   for (const p of room.props) ents.push({ y: p.sortY ?? p.y, prop: p });
+  for (const peer of s.peers.values()) ents.push({ y: peer.curY, peer });
   ents.push({ y: s.pos.y, player: true });
   ents.sort((a, b) => a.y - b.y);
   for (const e of ents) {
@@ -122,21 +133,27 @@ function drawScene(ctx, canvas, s, theme, t) {
         walking: s.walking,
         frame: s.walkT,
       });
-      const tagY =
-        s.pos.y - (150 * SIZE_FACTOR[s.avatar.body.size] + 16) * AVATAR_SCALE - 8;
-      drawNameTag(ctx, s.name, s.pos.x, tagY);
+      drawNameTag(ctx, s.name, s.pos.x, tagYFor(s.avatar, s.pos.y), true);
+    } else if (e.peer) {
+      const pr = e.peer;
+      drawAvatar(ctx, pr.avatar, pr.curX, pr.curY, AVATAR_SCALE, {
+        walking: pr.walking,
+        frame: pr.walkT,
+      });
+      drawNameTag(ctx, pr.username, pr.curX, tagYFor(pr.avatar, pr.curY), false);
     } else {
       e.prop.draw(ctx, e.prop, P, theme, t);
     }
   }
 }
 
-export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
+export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJoinFailed }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const themeRef = useRef("light");
   const [toast, setToast] = useState(null);
   const [hint, setHint] = useState(true);
+  const [count, setCount] = useState(1);
   const sRef = useRef(null);
 
   // Mutable game state lives outside React so the rAF loop
@@ -161,6 +178,13 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
       viewH: 1,
       bg: null,
       bgKey: "",
+      // multiplayer
+      peers: new Map(), // playerId → {username, avatar, x, y, path, startedAt, curX, curY, walking, walkT}
+      conn: null,
+      clockOffset: 0,
+      moveTarget: null,
+      moveTimer: null,
+      lastMoveAt: 0,
     };
   }
 
@@ -176,6 +200,164 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
     obs.observe(el, { attributes: true, attributeFilter: ["class"] });
     return () => obs.disconnect();
   }, []);
+
+  // ---- multiplayer connection --------------------------------
+  useEffect(() => {
+    const s = sRef.current;
+    let cancelled = false;
+    let conn = null;
+
+    const refreshCount = () => setCount(s.peers.size + 1);
+
+    // roster/move wire format → peer record (idempotent upsert)
+    const applyWire = (p) => {
+      const prev = s.peers.get(p.id);
+      s.peers.set(p.id, {
+        id: p.id,
+        username: p.username || (prev && prev.username) || "???",
+        avatar: normalizeAvatar(p.avatar || (prev && prev.avatar)),
+        x: Number.isFinite(p.x) ? p.x : s.room.spawn.x,
+        y: Number.isFinite(p.y) ? p.y : s.room.spawn.y,
+        path: Array.isArray(p.path) ? p.path : [],
+        startedAt: Number.isFinite(p.startedAt) ? p.startedAt : null,
+        curX: Number.isFinite(p.x) ? p.x : s.room.spawn.x,
+        curY: Number.isFinite(p.y) ? p.y : s.room.spawn.y,
+        walking: false,
+        walkT: 0,
+      });
+    };
+
+    (async () => {
+      try {
+        conn = await joinRoom({
+          roomId: s.room.id,
+          player,
+          // Authoritative roster (initial join, reconnect resync,
+          // heartbeat re-join): reconcile the whole peer set.
+          onRoster: (players, serverNow) => {
+            if (cancelled) return;
+            s.clockOffset = serverNow - Date.now();
+            const seen = new Set();
+            for (const p of players) {
+              if (p.id === player.playerId) continue;
+              seen.add(p.id);
+              applyWire(p);
+            }
+            for (const id of [...s.peers.keys()]) {
+              if (!seen.has(id)) s.peers.delete(id);
+            }
+            refreshCount();
+          },
+          // Presence join: render newcomers immediately at their
+          // announced spot; the first "move" takes over from there.
+          onPeerJoin: (id, meta) => {
+            if (cancelled) return;
+            const existing = s.peers.get(id);
+            if (existing) {
+              if (meta.username) existing.username = meta.username;
+              if (meta.avatar) existing.avatar = normalizeAvatar(meta.avatar);
+            } else {
+              applyWire({ id, username: meta.username, avatar: meta.avatar, x: meta.x, y: meta.y, path: [], startedAt: null });
+            }
+            refreshCount();
+          },
+          onPeerMove: (p) => {
+            if (cancelled) return;
+            applyWire(p);
+            refreshCount();
+          },
+          onPeerLeave: (id) => {
+            if (cancelled) return;
+            s.peers.delete(id);
+            refreshCount();
+          },
+        });
+        if (cancelled) {
+          conn.leave();
+          return;
+        }
+        s.conn = conn;
+        s.clockOffset = conn.clockOffset;
+        for (const p of conn.players) applyWire(p);
+        refreshCount();
+
+        // Reconcile our own position with the server's:
+        // rejoin (Edit Character remount, refresh) keeps the old
+        // spot server-side while we reset to spawn locally.
+        const self = conn.self;
+        const atSpawn =
+          s.path.length === 0 &&
+          Math.hypot(s.pos.x - s.room.spawn.x, s.pos.y - s.room.spawn.y) < 2;
+        if (self) {
+          const serverMoved =
+            Math.hypot(self.x - s.room.spawn.x, self.y - s.room.spawn.y) > 2;
+          if (atSpawn && serverMoved) {
+            s.pos = { x: self.x, y: self.y };
+            conn.updateSelf(self.x, self.y);
+          } else if (!atSpawn) {
+            // We walked while the join was in flight — tell the
+            // server where we're headed so peers catch up.
+            const dest = s.path.length ? s.path[s.path.length - 1] : s.pos;
+            queueMoveSend(dest.x, dest.y);
+          }
+        }
+      } catch (err) {
+        if (cancelled) return;
+        const code = err && err.code;
+        if (code === "room_full" || code === "name_taken" || code === "bad_name") {
+          if (onJoinFailed) onJoinFailed(code, err.message);
+        } else {
+          setToast({
+            text: "Multiplayer is offline — walking solo for now.",
+            id: performance.now(),
+          });
+        }
+      }
+    })();
+
+    const onPageHide = () => {
+      if (conn) conn.leave();
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("pagehide", onPageHide);
+      if (s.moveTimer) {
+        clearTimeout(s.moveTimer);
+        s.moveTimer = null;
+      }
+      if (conn) conn.leave();
+      s.conn = null;
+      s.peers.clear();
+    };
+    // The component remounts (key on updatedAt) when identity
+    // changes, so this runs once per visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Coalesce rapid taps into ≤ ~3 sends/sec (matches the server
+  // rate limit) and retry the freshest destination on 429.
+  function queueMoveSend(x, y) {
+    const s = sRef.current;
+    s.moveTarget = { x, y };
+    if (s.moveTimer) return; // a send is already scheduled — it'll pick up the newest target
+    const fire = async () => {
+      s.moveTimer = null;
+      const t = s.moveTarget;
+      s.moveTarget = null;
+      if (!t || !s.conn) return;
+      try {
+        await s.conn.move(t.x, t.y);
+        s.lastMoveAt = Date.now();
+        s.conn.updateSelf(t.x, t.y);
+      } catch (err) {
+        if (err && err.status === 429 && !s.moveTarget) s.moveTarget = t;
+      }
+      if (s.moveTarget) s.moveTimer = setTimeout(fire, MOVE_SEND_GAP_MS);
+    };
+    const wait = Math.max(0, MOVE_SEND_GAP_MS - (Date.now() - s.lastMoveAt));
+    s.moveTimer = setTimeout(fire, wait);
+  }
 
   // Responsive canvas: CSS size from layout, backing store at
   // devicePixelRatio, zoom fits the room width within limits.
@@ -200,7 +382,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
     return () => ro.disconnect();
   }, []);
 
-  // Main loop: advance the walk, follow with the camera, draw.
+  // Main loop: advance the walks, follow with the camera, draw.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -213,7 +395,8 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
 
-      // constant-speed movement along the waypoint list
+      // own avatar: incremental constant-speed movement (instant
+      // response to taps; identical math to advanceAlongPath)
       let remaining = WALK_SPEED * dt;
       while (remaining > 0 && s.path.length) {
         const next = s.path[0];
@@ -239,6 +422,35 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
         s.pendingExit = null;
       }
       s.walking = moving;
+
+      // peers: DETERMINISTIC position from the validated path +
+      // server start time — survives hidden tabs, matches every
+      // other client and the server's own idea exactly.
+      const serverNow = Date.now() + s.clockOffset;
+      for (const peer of s.peers.values()) {
+        if (peer.startedAt && peer.path.length) {
+          const adv = advanceAlongPath(
+            peer.x,
+            peer.y,
+            peer.path,
+            (serverNow - peer.startedAt) / 1000
+          );
+          peer.curX = adv.x;
+          peer.curY = adv.y;
+          peer.walking = !adv.done;
+          peer.walkT = (serverNow - peer.startedAt) / 1000;
+          if (adv.done) {
+            peer.x = adv.x;
+            peer.y = adv.y;
+            peer.path = [];
+            peer.startedAt = null;
+          }
+        } else {
+          peer.curX = peer.x;
+          peer.curY = peer.y;
+          peer.walking = false;
+        }
+      }
 
       // camera: exponential ease toward the clamped follow spot
       const viewW = s.viewW / s.zoom;
@@ -303,6 +515,9 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
     }
     s.path = path;
     s.marker = { x: spot.x, y: spot.y, t: performance.now() };
+    // own walk starts NOW; the server validates the same
+    // destination and re-broadcasts for everyone else.
+    if (s.conn) queueMoveSend(spot.x, spot.y);
   }
 
   return (
@@ -315,6 +530,9 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
           <h1 className="font-display text-xl font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100 sm:text-2xl">
             Town Square
           </h1>
+          <span className="rounded-full border border-gray-300 bg-white px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-gray-600 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300">
+            {count} here
+          </span>
           {preview && (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
               Preview
@@ -355,8 +573,8 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter }) {
         )}
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        Tap a building to visit — interiors open soon. League friends appear
-        here once multiplayer arrives.
+        Tap a building to visit — interiors open soon. League friends in the
+        square walk around live; chat is on the way.
       </p>
     </div>
   );

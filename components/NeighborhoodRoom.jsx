@@ -26,13 +26,24 @@ import { drawAvatar, normalizeAvatar } from "@/lib/neighborhoodAvatar";
 import { getRoom } from "@/lib/neighborhood/rooms";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import { WALK_SPEED, advanceAlongPath } from "@/lib/neighborhood/movement";
-import { joinRoom } from "@/lib/neighborhood/realtime";
+import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
+import { CHAT_MAX, validateChatText, bubbleDurationMs } from "@/lib/neighborhood/chat";
 
 const AVATAR_SCALE = 0.92; // world size of players in rooms
 const MIN_ZOOM = 0.55; // keep avatars readable on small phones
 const MAX_ZOOM = 1;
 const SIZE_FACTOR = { short: 0.86, medium: 1, tall: 1.14 }; // mirrors drawAvatar
 const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
+const LOG_LIMIT = 120; // chat log entries kept in memory
+
+// Speech bubbles are drawn in SCREEN pixels (not world units)
+// so chat stays readable at every phone zoom level.
+const BUBBLE_FONT = "600 13.5px Inter, system-ui, sans-serif";
+const BUBBLE_MAX_W = 210;
+const BUBBLE_LINE_H = 17;
+const BUBBLE_PAD_X = 11;
+const BUBBLE_PAD_Y = 8;
+const BUBBLE_MAX_PER_PLAYER = 3; // rapid-fire stacks, oldest drops
 
 // Camera offset for one axis: follow the player, clamp to the
 // room, center (negative offset) when the room fits the view.
@@ -82,6 +93,130 @@ function drawNameTag(ctx, name, x, y, self) {
   ctx.fill();
   ctx.fillStyle = "#ffffff";
   ctx.fillText(name, x, y + 0.5);
+}
+
+// Greedy word wrap for bubble text; marathon "words" get
+// hard-broken so a bubble can never blow past its max width.
+function wrapChatLines(ctx, text, maxW) {
+  const lines = [];
+  let line = "";
+  for (let word of String(text).split(" ")) {
+    while (ctx.measureText(word).width > maxW) {
+      let cut = word.length;
+      while (cut > 1 && ctx.measureText(word.slice(0, cut)).width > maxW) cut--;
+      if (line) {
+        lines.push(line);
+        line = "";
+      }
+      lines.push(word.slice(0, cut));
+      word = word.slice(cut);
+    }
+    if (!word) continue;
+    const attempt = line ? `${line} ${word}` : word;
+    if (ctx.measureText(attempt).width <= maxW) line = attempt;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+// Chat bubbles — thick rounded outlines to match the art
+// direction, newest message nearest the speaker's head with
+// older ones stacked above, tail only on the newest. Drawn in
+// screen space after the world pass; speakers are sorted by
+// depth so whoever is nearer the camera keeps their bubble on
+// top when neighbors overlap, and every bubble is clamped to
+// the viewport so it stays readable at the room edges.
+function drawSpeechBubbles(ctx, s) {
+  if (!s.cam || !s.bubbles.size) return;
+  const now = Date.now();
+  const speakers = [];
+  const collect = (id, avatar, x, y) => {
+    const list = s.bubbles.get(id);
+    if (list && list.length) {
+      speakers.push({ x, headY: tagYFor(avatar, y), depth: y, list });
+    }
+  };
+  collect(s.selfId, s.avatar, s.pos.x, s.pos.y);
+  for (const peer of s.peers.values()) {
+    collect(peer.id, peer.avatar, peer.curX, peer.curY);
+  }
+  if (!speakers.length) return;
+  speakers.sort((a, b) => a.depth - b.depth);
+
+  ctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
+  ctx.font = BUBBLE_FONT;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  for (const sp of speakers) {
+    const sx = (sp.x - s.cam.x) * s.zoom;
+    let bottom = (sp.headY - s.cam.y) * s.zoom - 14; // clear of the name tag
+    const list = [...sp.list].sort((a, b) => a.at - b.at);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const b = list[i];
+      const alpha = Math.max(0, Math.min(1, (b.until - now) / 300));
+      if (alpha <= 0) continue;
+      const lines = wrapChatLines(ctx, b.text, BUBBLE_MAX_W);
+      let textW = 0;
+      for (const l of lines) textW = Math.max(textW, ctx.measureText(l).width);
+      const w = textW + BUBBLE_PAD_X * 2;
+      const h = lines.length * BUBBLE_LINE_H + BUBBLE_PAD_Y * 2;
+      const newest = i === list.length - 1;
+      const tailH = newest ? 8 : 0;
+      const cx = Math.min(
+        Math.max(sx, w / 2 + 6),
+        Math.max(w / 2 + 6, s.viewW - w / 2 - 6)
+      );
+      const left = cx - w / 2;
+      const top = Math.max(6, bottom - tailH - h);
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = "rgba(16,24,32,0.85)";
+      ctx.lineWidth = 3;
+      // Strokes first, fills after, so the tail and the body
+      // merge into one seamless thick outline.
+      let tail = null;
+      if (newest) {
+        const tx = Math.min(Math.max(sx, left + 16), left + w - 16);
+        tail = new Path2D();
+        tail.moveTo(tx - 8, top + h - 2);
+        tail.lineTo(tx, top + h + tailH);
+        tail.lineTo(tx + 8, top + h - 2);
+        tail.closePath();
+        ctx.stroke(tail);
+      }
+      roundRectPath(ctx, left, top, w, h, 13);
+      ctx.stroke();
+      ctx.fillStyle = "#ffffff";
+      if (tail) ctx.fill(tail);
+      roundRectPath(ctx, left, top, w, h, 13);
+      ctx.fill();
+      ctx.fillStyle = "#17222d";
+      for (let li = 0; li < lines.length; li++) {
+        ctx.fillText(
+          lines[li],
+          left + BUBBLE_PAD_X,
+          top + BUBBLE_PAD_Y + BUBBLE_LINE_H * (li + 0.5)
+        );
+      }
+      bottom = top - 6;
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// "just now" / "2m ago" stamps for the chat log.
+function relTime(at) {
+  const secs = Math.max(0, Math.round((Date.now() - (at || 0)) / 1000));
+  if (secs < 45) return "just now";
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
 }
 
 function drawScene(ctx, canvas, s, theme, t) {
@@ -145,6 +280,9 @@ function drawScene(ctx, canvas, s, theme, t) {
       e.prop.draw(ctx, e.prop, P, theme, t);
     }
   }
+
+  // Chat draws over everything, in screen space.
+  drawSpeechBubbles(ctx, s);
 }
 
 export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJoinFailed }) {
@@ -154,6 +292,13 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
   const [toast, setToast] = useState(null);
   const [hint, setHint] = useState(true);
   const [count, setCount] = useState(1);
+  const [log, setLog] = useState([]); // chat log entries (backfill + live)
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [, setClockTick] = useState(0); // re-render for relative stamps
+  const chatBarRef = useRef(null);
+  const logRef = useRef(null);
   const sRef = useRef(null);
 
   // Mutable game state lives outside React so the rAF loop
@@ -185,6 +330,9 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       moveTarget: null,
       moveTimer: null,
       lastMoveAt: 0,
+      // chat
+      selfId: player?.playerId || "self",
+      bubbles: new Map(), // playerId → [{ id, text, at, until }]
     };
   }
 
@@ -271,6 +419,11 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
             s.peers.delete(id);
             refreshCount();
           },
+          onChat: (m) => {
+            if (cancelled || !m || !m.text) return;
+            pushBubble(m.playerId, m.id, m.text);
+            appendLog(m);
+          },
         });
         if (cancelled) {
           conn.leave();
@@ -280,6 +433,20 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
         s.clockOffset = conn.clockOffset;
         for (const p of conn.players) applyWire(p);
         refreshCount();
+
+        // Chat log backfill from the stored trail, so a reload
+        // (or late join) shows the recent conversation.
+        fetchChatHistory(s.room.id).then((history) => {
+          if (cancelled || !history.length) return;
+          setLog((prev) => {
+            const seen = new Set(prev.map((e) => e.id));
+            const merged = [...history.filter((m) => !seen.has(m.id)), ...prev];
+            merged.sort((a, b) => (a.at || 0) - (b.at || 0));
+            return merged.length > LOG_LIMIT
+              ? merged.slice(merged.length - LOG_LIMIT)
+              : merged;
+          });
+        });
 
         // Reconcile our own position with the server's:
         // rejoin (Edit Character remount, refresh) keeps the old
@@ -357,6 +524,84 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     };
     const wait = Math.max(0, MOVE_SEND_GAP_MS - (Date.now() - s.lastMoveAt));
     s.moveTimer = setTimeout(fire, wait);
+  }
+
+  // ---- chat ------------------------------------------------
+  function pushBubble(playerId, id, text) {
+    const s = sRef.current;
+    const list = s.bubbles.get(playerId) || [];
+    list.push({ id, text, at: Date.now(), until: Date.now() + bubbleDurationMs(text) });
+    while (list.length > BUBBLE_MAX_PER_PLAYER) list.shift();
+    s.bubbles.set(playerId, list);
+  }
+
+  function dropBubble(playerId, id) {
+    const s = sRef.current;
+    const list = s.bubbles.get(playerId);
+    if (!list) return;
+    const alive = list.filter((b) => b.id !== id);
+    if (alive.length) s.bubbles.set(playerId, alive);
+    else s.bubbles.delete(playerId);
+  }
+
+  function appendLog(entry) {
+    setLog((prev) => {
+      if (entry.id && prev.some((e) => e.id === entry.id)) return prev;
+      const next = [...prev, entry];
+      return next.length > LOG_LIMIT ? next.slice(next.length - LOG_LIMIT) : next;
+    });
+  }
+
+  // Optimistic send: bubble + log line appear instantly, the
+  // round trip swaps in the server id/timestamp — or marks the
+  // line failed and pulls the bubble back down gently.
+  async function handleChatSubmit(e) {
+    e.preventDefault();
+    const s = sRef.current;
+    const v = validateChatText(chatDraft);
+    if (!v.ok) {
+      if (v.code !== "empty") setToast({ text: v.error, id: performance.now() });
+      return;
+    }
+    if (!s.conn) {
+      setToast({ text: "Chat is offline right now — try a refresh.", id: performance.now() });
+      return;
+    }
+    if (chatBusy) return;
+    setChatDraft("");
+    const localId = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    pushBubble(s.selfId, localId, v.value);
+    appendLog({
+      id: localId,
+      playerId: s.selfId,
+      username: s.name,
+      text: v.value,
+      at: Date.now(),
+      pending: true,
+    });
+    setChatBusy(true);
+    try {
+      const res = await s.conn.chat(v.value);
+      const m = res && res.message;
+      setLog((prev) =>
+        prev.map((entry) =>
+          entry.id === localId
+            ? { ...entry, id: (m && m.id) || localId, at: (m && m.at) || entry.at, pending: false }
+            : entry
+        )
+      );
+    } catch (err) {
+      dropBubble(s.selfId, localId);
+      setLog((prev) =>
+        prev.map((entry) =>
+          entry.id === localId ? { ...entry, pending: false, failed: true } : entry
+        )
+      );
+      setToast({ text: (err && err.message) || "That message didn't send.", id: performance.now() });
+      if (err && err.code === "rate_limited") setChatDraft(v.value);
+    } finally {
+      setChatBusy(false);
+    }
   }
 
   // Responsive canvas: CSS size from layout, backing store at
@@ -465,6 +710,16 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
         s.cam.y += (dy2 - s.cam.y) * k;
       }
 
+      // let expired speech bubbles go
+      const wallNow = Date.now();
+      for (const [id, list] of s.bubbles) {
+        const alive = list.filter((b) => b.until > wallNow);
+        if (alive.length !== list.length) {
+          if (alive.length) s.bubbles.set(id, alive);
+          else s.bubbles.delete(id);
+        }
+      }
+
       drawScene(ctx, canvas, s, themeRef.current, now / 1000);
       raf = requestAnimationFrame(frame);
     };
@@ -478,6 +733,46 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     const t = setTimeout(() => setToast(null), 2600);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // Mobile keyboards: lift the chat bar by exactly however much
+  // the keyboard overlaps it (visualViewport), leaving the
+  // canvas layout itself alone. The 16px input font prevents
+  // iOS zoom-on-focus.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      const bar = chatBarRef.current;
+      if (!bar) return;
+      bar.style.transform = "none";
+      const rect = bar.getBoundingClientRect();
+      const keyboardTop = vv.offsetTop + vv.height;
+      const overlap = rect.bottom + 8 - keyboardTop;
+      if (overlap > 0) bar.style.transform = `translateY(${-overlap}px)`;
+    };
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    window.addEventListener("scroll", apply, true);
+    apply();
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      window.removeEventListener("scroll", apply, true);
+    };
+  }, []);
+
+  // pin the log to the newest message
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log, chatOpen]);
+
+  // keep "2m ago" stamps fresh while the log is open
+  useEffect(() => {
+    if (!chatOpen) return;
+    const t = setInterval(() => setClockTick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, [chatOpen]);
 
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
@@ -539,13 +834,27 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onEditCharacter}
-          className="min-h-[40px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
-        >
-          Edit Character
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setChatOpen((v) => !v)}
+            aria-pressed={chatOpen}
+            className={`min-h-[40px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest transition-colors ${
+              chatOpen
+                ? "bg-espn text-white"
+                : "text-espn hover:bg-espn hover:text-white"
+            }`}
+          >
+            {chatOpen ? "Hide Log" : "Chat Log"}
+          </button>
+          <button
+            type="button"
+            onClick={onEditCharacter}
+            className="min-h-[40px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+          >
+            Edit Character
+          </button>
+        </div>
       </div>
 
       <div
@@ -561,20 +870,86 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
           style={{ WebkitTouchCallout: "none" }}
           aria-label="Town Square — tap the ground to walk"
         />
+        {chatOpen && (
+          <div
+            ref={logRef}
+            aria-label="Chat log"
+            className="absolute right-2 top-2 z-10 max-h-[55%] w-[min(19rem,78%)] space-y-2 overflow-y-auto rounded-xl border border-gray-200 bg-white/95 p-2.5 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900/95"
+          >
+            {log.length === 0 && (
+              <p className="py-1 text-center text-xs text-gray-500 dark:text-gray-400">
+                No chatter yet — say hi!
+              </p>
+            )}
+            {log.map((entry) => (
+              <div key={entry.id} className={entry.failed ? "opacity-70" : ""}>
+                <span
+                  className={`font-semibold ${
+                    entry.playerId === sRef.current.selfId
+                      ? "text-espn"
+                      : "text-gray-900 dark:text-gray-100"
+                  }`}
+                >
+                  {entry.username}
+                </span>{" "}
+                <span className="text-[11px] text-gray-400 dark:text-gray-500">
+                  {entry.pending
+                    ? "sending…"
+                    : entry.failed
+                      ? "not sent"
+                      : relTime(entry.at)}
+                </span>
+                <p
+                  className={`break-words leading-snug ${
+                    entry.failed
+                      ? "italic text-gray-400 line-through dark:text-gray-500"
+                      : "text-gray-700 dark:text-gray-200"
+                  }`}
+                >
+                  {entry.text}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
         {(toast || hint) && (
           <div
             aria-live="polite"
-            className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-4"
+            className="pointer-events-none absolute inset-x-0 bottom-[4.25rem] flex justify-center px-4"
           >
             <p className="rounded-full bg-black/70 px-4 py-2 text-center text-sm font-medium text-white">
               {toast ? toast.text : "Tap the ground to walk around"}
             </p>
           </div>
         )}
+        <form
+          ref={chatBarRef}
+          onSubmit={handleChatSubmit}
+          className="absolute inset-x-2 bottom-2 z-20 flex items-center gap-2"
+        >
+          <input
+            type="text"
+            value={chatDraft}
+            onChange={(e) => setChatDraft(e.target.value)}
+            maxLength={CHAT_MAX}
+            placeholder="Say something…"
+            enterKeyHint="send"
+            autoComplete="off"
+            aria-label="Chat message"
+            className="h-11 min-w-0 flex-1 rounded-full border border-gray-300 bg-white/95 px-4 text-[16px] text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-espn dark:border-gray-600 dark:bg-gray-900/95 dark:text-gray-100"
+          />
+          <button
+            type="submit"
+            disabled={chatBusy}
+            className="h-11 min-w-[64px] rounded-full bg-espn px-4 font-display text-xs uppercase tracking-widest text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            Send
+          </button>
+        </form>
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
         Tap a building to visit — interiors open soon. League friends in the
-        square walk around live; chat is on the way.
+        square walk around and chat live — open the log to catch up.
       </p>
     </div>
   );

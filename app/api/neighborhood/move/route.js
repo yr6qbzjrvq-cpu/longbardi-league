@@ -33,8 +33,8 @@ export const dynamic = "force-dynamic";
 //      constant-speed simulation.
 // ============================================================
 
-const MOVES_PER_WINDOW = 3;
-const WINDOW_MS = 1000;
+// The 3-moves-per-1000ms window itself lives in the SQL
+// function neighborhood_record_move (see supabase notes).
 
 export async function POST(request) {
   if (!(await canSeeNeighborhood())) {
@@ -75,17 +75,28 @@ export async function POST(request) {
 
     const now = Date.now();
 
-    // Postgres-backed sliding window rate limit.
-    const times = (Array.isArray(row.move_times) ? row.move_times : [])
-      .map(Number)
-      .filter((t) => Number.isFinite(t) && now - t < WINDOW_MS);
-    if (times.length >= MOVES_PER_WINDOW) {
+    // Postgres-backed sliding window rate limit (~3 moves/sec).
+    // Enforced by an atomic, row-locked SQL function
+    // (neighborhood_record_move) so it survives serverless cold
+    // starts AND parallel lambda instances can't race past the
+    // cap with concurrent requests.
+    const { data: gate, error: gateErr } = await supabase.rpc(
+      "neighborhood_record_move",
+      { p_id: playerId, p_now_ms: now }
+    );
+    if (gateErr) throw gateErr;
+    if (gate === "rate_limited") {
       return NextResponse.json(
         { error: "Too many moves — slow down.", code: "rate_limited" },
         { status: 429 }
       );
     }
-    times.push(now);
+    if (gate === "not_joined") {
+      return NextResponse.json(
+        { error: "Join the room first.", code: "not_joined" },
+        { status: 404 }
+      );
+    }
 
     const room = getRoom(row.room);
     const grid = getNavGrid(room);
@@ -106,7 +117,6 @@ export async function POST(request) {
         y: cur.y,
         path,
         path_started_at: path.length ? nowIso : null,
-        move_times: times,
         last_seen: nowIso,
       })
       .eq("id", playerId);

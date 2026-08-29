@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// HSPNeighborhood — room engine (multiplayer, milestone 4)
+// HSPNeighborhood — room engine (multiplayer + doors, m4-m6)
 // ------------------------------------------------------------
 // Renders one room config from lib/neighborhood/rooms.js on a
 // <canvas>:
@@ -18,7 +18,12 @@
 //     tab or a late joiner lands on the exact same positions
 //   • Y-depth sorting of props + every player each frame
 //   • camera follow with room clamping, DPR-aware sizing,
-//     dark/light palettes, door "opening soon" nudges
+//     dark/light palettes
+//   • doors (milestone 6): arriving on an exit hotspot joins
+//     the target room via the same join API (capacity checked
+//     there — full rooms bounce you back with a toast), swaps
+//     world + Realtime channel + peers under a short fade,
+//     and replays the new room's chat history in the log
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +40,7 @@ const MAX_ZOOM = 1;
 const SIZE_FACTOR = { short: 0.86, medium: 1, tall: 1.14 }; // mirrors drawAvatar
 const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
 const LOG_LIMIT = 120; // chat log entries kept in memory
+const FADE_SPEED = 4; // door-transition fade, full swings per second
 
 // Speech bubbles are drawn in SCREEN pixels (not world units)
 // so chat stays readable at every phone zoom level.
@@ -283,6 +289,15 @@ function drawScene(ctx, canvas, s, theme, t) {
 
   // Chat draws over everything, in screen space.
   drawSpeechBubbles(ctx, s);
+
+  // door-transition fade, screen space, over the whole frame
+  if (s.fade > 0) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = s.fade;
+    ctx.fillStyle = "#0e1218";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1;
+  }
 }
 
 export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJoinFailed }) {
@@ -292,6 +307,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
   const [toast, setToast] = useState(null);
   const [hint, setHint] = useState(true);
   const [count, setCount] = useState(1);
+  const [roomName, setRoomName] = useState("Town Square");
   const [log, setLog] = useState([]); // chat log entries (backfill + live)
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
@@ -333,6 +349,12 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       // chat
       selfId: player?.playerId || "self",
       bubbles: new Map(), // playerId → [{ id, text, at, until }]
+      // doors (milestone 6)
+      destroyed: false,
+      connGen: 0, // bumps per connection; stale events are dropped
+      switching: false,
+      fade: 0,
+      fadeTarget: 0,
     };
   }
 
@@ -350,82 +372,115 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
   }, []);
 
   // ---- multiplayer connection --------------------------------
+
+  function refreshCount() {
+    const s = sRef.current;
+    setCount(s.peers.size + 1);
+  }
+
+  // roster/move wire format → peer record (idempotent upsert)
+  function applyWire(p) {
+    const s = sRef.current;
+    const prev = s.peers.get(p.id);
+    s.peers.set(p.id, {
+      id: p.id,
+      username: p.username || (prev && prev.username) || "???",
+      avatar: normalizeAvatar(p.avatar || (prev && prev.avatar)),
+      x: Number.isFinite(p.x) ? p.x : s.room.spawn.x,
+      y: Number.isFinite(p.y) ? p.y : s.room.spawn.y,
+      path: Array.isArray(p.path) ? p.path : [],
+      startedAt: Number.isFinite(p.startedAt) ? p.startedAt : null,
+      curX: Number.isFinite(p.x) ? p.x : s.room.spawn.x,
+      curY: Number.isFinite(p.y) ? p.y : s.room.spawn.y,
+      walking: false,
+      walkT: 0,
+    });
+  }
+
+  // Event handlers for ONE connection generation. Every event
+  // checks it still belongs to the room the player is in, so
+  // nothing from a room we already left can smudge the current
+  // one (door hops swap connections mid-flight — milestone 6).
+  function makeHandlers(gen) {
+    const s = sRef.current;
+    const live = () => !s.destroyed && gen === s.connGen && !s.switching;
+    return {
+      // Authoritative roster (initial join, reconnect resync,
+      // heartbeat re-join): reconcile the whole peer set.
+      onRoster: (players, serverNow) => {
+        if (!live()) return;
+        s.clockOffset = serverNow - Date.now();
+        const seen = new Set();
+        for (const p of players) {
+          if (p.id === player.playerId) continue;
+          seen.add(p.id);
+          applyWire(p);
+        }
+        for (const id of [...s.peers.keys()]) {
+          if (!seen.has(id)) s.peers.delete(id);
+        }
+        refreshCount();
+      },
+      // Presence join: render newcomers immediately at their
+      // announced spot; the first "move" takes over from there.
+      onPeerJoin: (id, meta) => {
+        if (!live()) return;
+        const existing = s.peers.get(id);
+        if (existing) {
+          if (meta.username) existing.username = meta.username;
+          if (meta.avatar) existing.avatar = normalizeAvatar(meta.avatar);
+        } else {
+          applyWire({ id, username: meta.username, avatar: meta.avatar, x: meta.x, y: meta.y, path: [], startedAt: null });
+        }
+        refreshCount();
+      },
+      onPeerMove: (p) => {
+        if (!live()) return;
+        applyWire(p);
+        refreshCount();
+      },
+      onPeerLeave: (id) => {
+        if (!live()) return;
+        s.peers.delete(id);
+        refreshCount();
+      },
+      onChat: (m) => {
+        if (!live() || !m || !m.text) return;
+        pushBubble(m.playerId, m.id, m.text);
+        appendLog(m);
+      },
+    };
+  }
+
+  // Open a connection to `roomId` with fresh handlers. Events
+  // route to the new generation immediately; a failed join
+  // rolls the generation back so the old room stays live.
+  async function openConn(roomId, entryPoint) {
+    const s = sRef.current;
+    const prevGen = s.connGen;
+    const gen = prevGen + 1;
+    s.connGen = gen;
+    try {
+      return await joinRoom({
+        roomId,
+        player,
+        entry: entryPoint || undefined,
+        ...makeHandlers(gen),
+      });
+    } catch (err) {
+      s.connGen = prevGen;
+      throw err;
+    }
+  }
+
   useEffect(() => {
     const s = sRef.current;
-    let cancelled = false;
-    let conn = null;
-
-    const refreshCount = () => setCount(s.peers.size + 1);
-
-    // roster/move wire format → peer record (idempotent upsert)
-    const applyWire = (p) => {
-      const prev = s.peers.get(p.id);
-      s.peers.set(p.id, {
-        id: p.id,
-        username: p.username || (prev && prev.username) || "???",
-        avatar: normalizeAvatar(p.avatar || (prev && prev.avatar)),
-        x: Number.isFinite(p.x) ? p.x : s.room.spawn.x,
-        y: Number.isFinite(p.y) ? p.y : s.room.spawn.y,
-        path: Array.isArray(p.path) ? p.path : [],
-        startedAt: Number.isFinite(p.startedAt) ? p.startedAt : null,
-        curX: Number.isFinite(p.x) ? p.x : s.room.spawn.x,
-        curY: Number.isFinite(p.y) ? p.y : s.room.spawn.y,
-        walking: false,
-        walkT: 0,
-      });
-    };
+    s.destroyed = false;
 
     (async () => {
       try {
-        conn = await joinRoom({
-          roomId: s.room.id,
-          player,
-          // Authoritative roster (initial join, reconnect resync,
-          // heartbeat re-join): reconcile the whole peer set.
-          onRoster: (players, serverNow) => {
-            if (cancelled) return;
-            s.clockOffset = serverNow - Date.now();
-            const seen = new Set();
-            for (const p of players) {
-              if (p.id === player.playerId) continue;
-              seen.add(p.id);
-              applyWire(p);
-            }
-            for (const id of [...s.peers.keys()]) {
-              if (!seen.has(id)) s.peers.delete(id);
-            }
-            refreshCount();
-          },
-          // Presence join: render newcomers immediately at their
-          // announced spot; the first "move" takes over from there.
-          onPeerJoin: (id, meta) => {
-            if (cancelled) return;
-            const existing = s.peers.get(id);
-            if (existing) {
-              if (meta.username) existing.username = meta.username;
-              if (meta.avatar) existing.avatar = normalizeAvatar(meta.avatar);
-            } else {
-              applyWire({ id, username: meta.username, avatar: meta.avatar, x: meta.x, y: meta.y, path: [], startedAt: null });
-            }
-            refreshCount();
-          },
-          onPeerMove: (p) => {
-            if (cancelled) return;
-            applyWire(p);
-            refreshCount();
-          },
-          onPeerLeave: (id) => {
-            if (cancelled) return;
-            s.peers.delete(id);
-            refreshCount();
-          },
-          onChat: (m) => {
-            if (cancelled || !m || !m.text) return;
-            pushBubble(m.playerId, m.id, m.text);
-            appendLog(m);
-          },
-        });
-        if (cancelled) {
+        const conn = await openConn(s.room.id, null);
+        if (s.destroyed) {
           conn.leave();
           return;
         }
@@ -437,7 +492,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
         // Chat log backfill from the stored trail, so a reload
         // (or late join) shows the recent conversation.
         fetchChatHistory(s.room.id).then((history) => {
-          if (cancelled || !history.length) return;
+          if (s.destroyed || s.conn !== conn || !history.length) return;
           setLog((prev) => {
             const seen = new Set(prev.map((e) => e.id));
             const merged = [...history.filter((m) => !seen.has(m.id)), ...prev];
@@ -469,7 +524,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
           }
         }
       } catch (err) {
-        if (cancelled) return;
+        if (s.destroyed) return;
         const code = err && err.code;
         if (code === "room_full" || code === "name_taken" || code === "bad_name") {
           if (onJoinFailed) onJoinFailed(code, err.message);
@@ -483,17 +538,17 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     })();
 
     const onPageHide = () => {
-      if (conn) conn.leave();
+      if (s.conn) s.conn.leave();
     };
     window.addEventListener("pagehide", onPageHide);
     return () => {
-      cancelled = true;
+      s.destroyed = true;
       window.removeEventListener("pagehide", onPageHide);
       if (s.moveTimer) {
         clearTimeout(s.moveTimer);
         s.moveTimer = null;
       }
-      if (conn) conn.leave();
+      if (s.conn) s.conn.leave();
       s.conn = null;
       s.peers.clear();
     };
@@ -501,6 +556,94 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     // changes, so this runs once per visit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ---- doors (milestone 6) ---------------------------------
+  // Arriving on an exit hotspot lands here: fade out, join the
+  // target room (its capacity is enforced by the join API — a
+  // full room bounces you back where you stand), then swap the
+  // world, channel, peers and chat log in one go and fade in.
+  async function goThroughDoor(exit) {
+    const s = sRef.current;
+    if (s.switching || s.destroyed) return;
+    if (!s.conn) {
+      setToast({
+        text: "Doors need the live connection — try a refresh.",
+        id: performance.now(),
+      });
+      return;
+    }
+    const target = getRoom(exit.roomId);
+    const entryPoint = exit.arrive || target.spawn;
+    s.switching = true;
+    s.fadeTarget = 1;
+    // a queued move for the old room must not fire mid-hop
+    s.moveTarget = null;
+    if (s.moveTimer) {
+      clearTimeout(s.moveTimer);
+      s.moveTimer = null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      const conn = await openConn(target.id, entryPoint);
+      if (s.destroyed) {
+        // unmounted mid-hop: cleanup already sent /leave for our
+        // row; just close the fresh channel.
+        conn.detach();
+        return;
+      }
+      const old = s.conn;
+      s.room = target;
+      s.grid = getNavGrid(target);
+      s.bg = null;
+      s.bgKey = "";
+      s.peers.clear();
+      s.bubbles.clear();
+      s.path = [];
+      s.walking = false;
+      s.walkT = 0;
+      s.pendingExit = null;
+      s.marker = null;
+      s.lastMoveAt = 0;
+      const self = conn.self;
+      s.pos = self ? { x: self.x, y: self.y } : { ...entryPoint };
+      s.cam = null; // snap, don't pan, into the new room
+      s.zoom = Math.min(Math.max(s.viewW / target.width, MIN_ZOOM), MAX_ZOOM);
+      s.conn = conn;
+      s.clockOffset = conn.clockOffset;
+      for (const p of conn.players) applyWire(p);
+      refreshCount();
+      conn.updateSelf(s.pos.x, s.pos.y);
+      // the old channel goes away, but our row already moved —
+      // detach (no /leave, which would delete the new row)
+      if (old) old.detach();
+      setRoomName(target.name);
+      setLog([]); // the log follows the room
+      fetchChatHistory(target.id).then((history) => {
+        if (s.destroyed || s.conn !== conn) return;
+        setLog(history);
+      });
+    } catch (err) {
+      if (err && err.code === "room_full") {
+        setToast({
+          text: `${exit.label} is packed right now — try again in a minute.`,
+          id: performance.now(),
+        });
+      } else if (!s.destroyed) {
+        setToast({
+          text: "That door seems stuck — give it another try.",
+          id: performance.now(),
+        });
+      }
+    } finally {
+      s.switching = false;
+      s.fadeTarget = 0;
+    }
+  }
+
+  // The rAF loop lives in a run-once effect; hand it the latest
+  // door fn through a ref so it never calls a stale closure.
+  const doorFnRef = useRef(null);
+  doorFnRef.current = goThroughDoor;
 
   // Coalesce rapid taps into ≤ ~3 sends/sec (matches the server
   // rate limit) and retry the freshest destination on 429.
@@ -662,11 +805,26 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       const moving = s.path.length > 0;
       if (moving) s.walkT += dt;
       if (!moving && s.walking && s.pendingExit) {
-        // arrived at a door — interiors open in milestone 6
-        setToast({ text: `${s.pendingExit.label} — opening soon!`, id: now });
+        // arrived at a door — step through (or nudge if that
+        // room isn't in the registry yet)
+        const exit = s.pendingExit;
         s.pendingExit = null;
+        if (exit.roomId && doorFnRef.current) {
+          doorFnRef.current(exit);
+        } else {
+          setToast({ text: `${exit.label} — opening soon!`, id: now });
+        }
       }
       s.walking = moving;
+
+      // door-transition fade eases toward its target
+      if (s.fade !== s.fadeTarget) {
+        const step = FADE_SPEED * dt;
+        s.fade =
+          s.fade < s.fadeTarget
+            ? Math.min(s.fadeTarget, s.fade + step)
+            : Math.max(s.fadeTarget, s.fade - step);
+      }
 
       // peers: DETERMINISTIC position from the validated path +
       // server start time — survives hidden tabs, matches every
@@ -778,12 +936,13 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     const canvas = canvasRef.current;
     const s = sRef.current;
     if (!canvas || !s.cam) return;
+    if (s.switching) return; // mid door-hop — ignore taps
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const wx = (e.clientX - rect.left) / s.zoom + s.cam.x;
     const wy = (e.clientY - rect.top) / s.zoom + s.cam.y;
 
-    // Door tap? Walk over, then nudge on arrival.
+    // Door tap? Walk over, then step through on arrival.
     const exit = s.room.exits.find(
       (x) =>
         wx >= x.hotspot.x &&
@@ -801,10 +960,14 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     setHint(false);
     s.pendingExit = exit || null;
     if (path.length === 0) {
-      // already standing there
+      // already standing at the door — step straight through
       if (exit) {
-        setToast({ text: `${exit.label} — opening soon!`, id: performance.now() });
         s.pendingExit = null;
+        if (exit.roomId && doorFnRef.current) {
+          doorFnRef.current(exit);
+        } else {
+          setToast({ text: `${exit.label} — opening soon!`, id: performance.now() });
+        }
       }
       return;
     }
@@ -823,7 +986,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h1 className="font-display text-xl font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100 sm:text-2xl">
-            Town Square
+            {roomName}
           </h1>
           <span className="rounded-full border border-gray-300 bg-white px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-gray-600 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300">
             {count} here
@@ -868,7 +1031,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
           onContextMenu={(e) => e.preventDefault()}
           className="h-full w-full cursor-pointer touch-none select-none"
           style={{ WebkitTouchCallout: "none" }}
-          aria-label="Town Square — tap the ground to walk"
+          aria-label={`${roomName} — tap the ground to walk`}
         />
         {chatOpen && (
           <div
@@ -948,8 +1111,9 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
         </form>
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        Tap a building to visit — interiors open soon. League friends in the
-        square walk around and chat live — open the log to catch up.
+        Tap a doorway to head inside — or back out to the square. League
+        friends in the room walk around and chat live; open the log to catch
+        up.
       </p>
     </div>
   );

@@ -1,14 +1,15 @@
 "use client";
 
 // ============================================================
-// HSPNeighborhood — screen flow
+// HSPNeighborhood — screen flow (multiplayer, milestone 4)
 // ------------------------------------------------------------
 // Decides which screen /neighborhood shows: first visit (no
 // saved character in this browser) → avatar creator; returning
-// player → straight into the Town Square. "Edit Character" in
-// the room comes back to the creator, and saving there drops
-// you into the square. Identity is per-browser by design (see
-// lib/neighborhoodPlayer).
+// player → the Town Square, which joins the realtime room on
+// mount. Join rejections route back here gracefully:
+//   name_taken / bad_name → creator with the reason on top
+//   room_full             → a "square is full" screen with retry
+// Identity is per-browser by design (see lib/neighborhoodPlayer).
 // ============================================================
 
 import { useEffect, useState } from "react";
@@ -19,6 +20,8 @@ import { loadPlayer } from "@/lib/neighborhoodPlayer";
 export default function NeighborhoodClient({ preview }) {
   const [view, setView] = useState("loading");
   const [player, setPlayer] = useState(null);
+  const [joinError, setJoinError] = useState(null);
+  const [roomNonce, setRoomNonce] = useState(0); // bump to force a fresh join attempt
 
   // localStorage is browser-only, so route after mount.
   useEffect(() => {
@@ -41,13 +44,61 @@ export default function NeighborhoodClient({ preview }) {
     );
   }
 
+  if (view === "full") {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-4 text-center">
+        <h1 className="font-display text-2xl font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100">
+          The Town Square is packed
+        </h1>
+        <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
+          {joinError ||
+            "The Town Square is full right now (24 max). Hang tight and try again in a minute."}
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setJoinError(null);
+              setRoomNonce((n) => n + 1);
+              setView("room");
+            }}
+            className="min-h-[44px] rounded-md bg-espn px-5 font-display text-sm uppercase tracking-widest text-white transition-opacity hover:opacity-90"
+          >
+            Try Again
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setJoinError(null);
+              setView("creator");
+            }}
+            className="min-h-[44px] rounded-md border border-espn px-5 font-display text-sm uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+          >
+            Edit Character
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (view === "room" && player) {
     return (
       <NeighborhoodRoom
-        key={player.updatedAt || "room"}
+        key={`${player.updatedAt || "room"}-${roomNonce}`}
         player={player}
         preview={preview}
         onEditCharacter={() => setView("creator")}
+        onJoinFailed={(code, message) => {
+          if (code === "room_full") {
+            setJoinError(message);
+            setView("full");
+          } else {
+            // name_taken / bad_name → back to the creator with
+            // the reason, so they can pick another name.
+            setJoinError(message || "Pick a different name and try again.");
+            setView("creator");
+          }
+        }}
       />
     );
   }
@@ -59,6 +110,12 @@ export default function NeighborhoodClient({ preview }) {
           <strong>Preview.</strong> Only the admin login can see this. Your
           character saves to this browser and walks the Town Square right
           here.
+        </div>
+      )}
+
+      {joinError && (
+        <div className="mb-6 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+          {joinError}
         </div>
       )}
 
@@ -75,7 +132,10 @@ export default function NeighborhoodClient({ preview }) {
           {player && (
             <button
               type="button"
-              onClick={() => setView("room")}
+              onClick={() => {
+                setJoinError(null);
+                setView("room");
+              }}
               className="min-h-[44px] rounded-md border border-espn px-4 font-display text-sm uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
             >
               Back to Town Square
@@ -86,7 +146,9 @@ export default function NeighborhoodClient({ preview }) {
 
       <NeighborhoodAvatarCreator
         onSaved={(record) => {
+          setJoinError(null);
           setPlayer(record);
+          setRoomNonce((n) => n + 1);
           setView("room");
         }}
       />

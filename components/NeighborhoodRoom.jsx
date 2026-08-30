@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// HSPNeighborhood — room engine (multiplayer + doors, m4-m7)
+// HSPNeighborhood — room engine (multiplayer + doors, m4-m8)
 // ------------------------------------------------------------
 // Renders one room config from lib/neighborhood/rooms.js on a
 // <canvas>:
@@ -30,6 +30,12 @@
 //     tears the connection down and hands off to the removed
 //     screen; "chat_delete" pulls a message out of the log and
 //     any still-visible bubble
+//   • secret chain (milestone 8): rooms may declare tappable
+//     `interact` hotspots — reveals (the restroom's spinning
+//     wall) and coded keypads (the hallway's blast door) —
+//     plus exits gated by the per-visit flags they set; the
+//     flags live in client state only, so every player
+//     discovers the chain for themselves
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
@@ -267,6 +273,9 @@ function drawScene(ctx, canvas, s, theme, t) {
     }
   }
 
+  // secret-chain state handed to prop draw fns (milestone 8)
+  const fx = { flags: s.flags, times: s.flagTimes };
+
   // Y-depth sort: lower feet = closer to camera = drawn later.
   // Props, every peer and ourselves all sort in ONE list.
   const ents = [];
@@ -289,7 +298,7 @@ function drawScene(ctx, canvas, s, theme, t) {
       });
       drawNameTag(ctx, pr.username, pr.curX, tagYFor(pr.avatar, pr.curY), false);
     } else {
-      e.prop.draw(ctx, e.prop, P, theme, t);
+      e.prop.draw(ctx, e.prop, P, theme, t, fx);
     }
   }
 
@@ -304,6 +313,148 @@ function drawScene(ctx, canvas, s, theme, t) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1;
   }
+}
+
+// ---- keypad overlay (milestone 8) --------------------------
+// Full-screen number pad for coded doors. The expected code
+// comes from the room config (`interact[].code`) — client-side
+// theater for an easter egg, not security. Wrong codes flash
+// ACCESS DENIED and shake; the right one hands off to
+// onSuccess after a short green beat. Keys are 56px tall for
+// phone thumbs, and a hardware keyboard works too.
+function KeypadOverlay({ act, onSuccess, onClose }) {
+  const [value, setValue] = useState("");
+  const [denied, setDenied] = useState(false);
+  const [granted, setGranted] = useState(false);
+  const [shakeKey, setShakeKey] = useState(0);
+  const timerRef = useRef(null);
+  const len = (act.code || "").length || 4;
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  function press(d) {
+    if (denied || granted) return;
+    const next = value.length < len ? value + d : value;
+    setValue(next);
+    if (next.length === len && next !== value) {
+      if (next === act.code) {
+        setGranted(true);
+        timerRef.current = setTimeout(onSuccess, 650);
+      } else {
+        setDenied(true);
+        setShakeKey((k) => k + 1);
+        timerRef.current = setTimeout(() => {
+          setDenied(false);
+          setValue("");
+        }, 850);
+      }
+    }
+  }
+
+  function backspace() {
+    if (!denied && !granted) setValue((v) => v.slice(0, -1));
+  }
+
+  // hardware keyboards: digits, backspace, escape
+  useEffect(() => {
+    const onKey = (e) => {
+      if (/^[0-9]$/.test(e.key)) press(e.key);
+      else if (e.key === "Backspace") backspace();
+      else if (e.key === "Escape" && !granted) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const slots = [];
+  for (let i = 0; i < len; i++) slots.push(value[i] || "");
+  const keyCls =
+    "flex h-14 items-center justify-center rounded-lg border border-gray-400 bg-white font-display text-xl font-semibold text-gray-800 shadow-sm transition active:scale-95 active:bg-gray-100 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-100 dark:active:bg-gray-600";
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Security keypad"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget && !granted) onClose();
+      }}
+    >
+      <style>{`@keyframes hspnKeypadShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-11px)}35%{transform:translateX(9px)}55%{transform:translateX(-7px)}75%{transform:translateX(5px)}90%{transform:translateX(-2px)}}`}</style>
+      <div
+        key={shakeKey}
+        className="w-full max-w-[20rem] rounded-2xl border-2 border-gray-500 bg-gray-100 p-4 shadow-2xl dark:border-gray-500 dark:bg-gray-800"
+        style={denied ? { animation: "hspnKeypadShake 0.5s" } : undefined}
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <p className="font-display text-sm font-semibold uppercase tracking-widest text-gray-800 dark:text-gray-100">
+              {act.title || "Security Door"}
+            </p>
+            <p
+              aria-live="polite"
+              className={`text-xs font-semibold uppercase tracking-wider ${
+                granted
+                  ? "text-green-600 dark:text-green-400"
+                  : denied
+                    ? "text-red-600 dark:text-red-400"
+                    : "text-gray-500 dark:text-gray-400"
+              }`}
+            >
+              {granted
+                ? "Access granted"
+                : denied
+                  ? "Access denied"
+                  : act.subtitle || "Enter access code"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close keypad"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-400 text-lg text-gray-600 transition hover:bg-gray-200 dark:border-gray-500 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            ✕
+          </button>
+        </div>
+        <div
+          className={`mb-3 flex h-14 items-center justify-center gap-3 rounded-lg border-2 bg-gray-900 font-mono text-2xl tracking-widest ${
+            granted
+              ? "border-green-500 text-green-400"
+              : denied
+                ? "border-red-500 text-red-400"
+                : "border-gray-600 text-emerald-300"
+          }`}
+        >
+          {slots.map((d, i) => (
+            <span
+              key={i}
+              className={`inline-block w-5 text-center ${d === "" ? "opacity-30" : ""}`}
+            >
+              {d === "" ? "•" : d}
+            </span>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
+            <button key={d} type="button" onClick={() => press(d)} className={keyCls}>
+              {d}
+            </button>
+          ))}
+          <button type="button" onClick={backspace} aria-label="Delete digit" className={keyCls}>
+            ⌫
+          </button>
+          <button type="button" onClick={() => press("0")} className={keyCls}>
+            0
+          </button>
+          <button type="button" onClick={onClose} aria-label="Cancel" className={keyCls}>
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function NeighborhoodRoom({
@@ -324,6 +475,7 @@ export default function NeighborhoodRoom({
   const [chatOpen, setChatOpen] = useState(false);
   const [chatDraft, setChatDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
+  const [keypad, setKeypad] = useState(null); // open keypad interact config (milestone 8)
   const [, setClockTick] = useState(0); // re-render for relative stamps
   const chatBarRef = useRef(null);
   const logRef = useRef(null);
@@ -364,6 +516,11 @@ export default function NeighborhoodRoom({
       // chat
       selfId: player?.playerId || "self",
       bubbles: new Map(), // playerId → [{ id, text, at, until }]
+      // secret chain (milestone 8): per-visit discovery flags
+      // (tunnelOpen, vaultOpen) + trigger times in seconds on
+      // the rAF clock, for the reveal animations
+      flags: {},
+      flagTimes: {},
       // doors (milestone 6)
       destroyed: false,
       connGen: 0, // bumps per connection; stale events are dropped
@@ -724,6 +881,22 @@ export default function NeighborhoodRoom({
     s.moveTimer = setTimeout(fire, wait);
   }
 
+  // ---- keypad (milestone 8) --------------------------------
+  // The right code flips the interact's flag: the vault prop
+  // animates open off the trigger time and the flag-gated exit
+  // behind it starts answering taps.
+  function keypadUnlocked() {
+    const s = sRef.current;
+    const act = keypad;
+    setKeypad(null);
+    if (!act) return;
+    s.flags[act.flag] = true;
+    s.flagTimes[act.flag] = performance.now() / 1000;
+    if (act.successToast) {
+      setToast({ text: act.successToast, id: performance.now() });
+    }
+  }
+
   // ---- chat ------------------------------------------------
   function pushBubble(playerId, id, text) {
     const s = sRef.current;
@@ -1005,9 +1178,36 @@ export default function NeighborhoodRoom({
     const wx = (e.clientX - rect.left) / s.zoom + s.cam.x;
     const wy = (e.clientY - rect.top) / s.zoom + s.cam.y;
 
-    // Door tap? Walk over, then step through on arrival.
+    // Interactive hotspot? (milestone 8 — the secret chain.)
+    // Reveals fire instantly; keypads open the overlay. Each
+    // only answers while its flag is still unset — after that
+    // the same spot belongs to the exit it revealed.
+    const act = (s.room.interact || []).find(
+      (a) =>
+        !s.flags[a.flag] &&
+        wx >= a.hotspot.x &&
+        wx <= a.hotspot.x + a.hotspot.w &&
+        wy >= a.hotspot.y &&
+        wy <= a.hotspot.y + a.hotspot.h
+    );
+    if (act) {
+      setHint(false);
+      if (act.type === "keypad") {
+        setKeypad(act);
+      } else {
+        s.flags[act.flag] = true;
+        s.flagTimes[act.flag] = performance.now() / 1000;
+        if (act.toast) setToast({ text: act.toast, id: performance.now() });
+      }
+      return;
+    }
+
+    // Door tap? Walk over, then step through on arrival. Flag-
+    // gated exits (tunnel, vault doorway) only answer once
+    // their reveal has happened.
     const exit = s.room.exits.find(
       (x) =>
+        (!x.requiresFlag || s.flags[x.requiresFlag]) &&
         wx >= x.hotspot.x &&
         wx <= x.hotspot.x + x.hotspot.w &&
         wy >= x.hotspot.y &&
@@ -1176,6 +1376,13 @@ export default function NeighborhoodRoom({
             Send
           </button>
         </form>
+        {keypad && (
+          <KeypadOverlay
+            act={keypad}
+            onSuccess={keypadUnlocked}
+            onClose={() => setKeypad(null)}
+          />
+        )}
       </div>
       <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
         Tap a doorway to head inside — or back out to the square. League

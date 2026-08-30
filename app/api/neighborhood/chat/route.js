@@ -6,6 +6,7 @@ import { validateChatText } from "@/lib/neighborhood/chat";
 import {
   TABLE,
   PLAYER_ID_RE,
+  activeBan,
   broadcastToRoom,
 } from "@/lib/neighborhood/multiplayerServer";
 
@@ -16,12 +17,14 @@ export const dynamic = "force-dynamic";
 // ------------------------------------------------------------
 // POST: validate (plain text only, 200-char cap, the same
 // keep-it-friendly filter as usernames), respect the muted
-// flag on neighborhood_players, rate-limit ~1 message per 2s
-// via the row-locked SQL function neighborhood_record_chat
-// (same pattern as moves — in-memory limits don't survive
-// serverless), INSERT into neighborhood_messages (moderation
-// trail + log backfill), then broadcast a "chat" event on the
-// room's Realtime channel.
+// flag AND any live timed ban on neighborhood_players
+// (milestone 7 — both enforced here, whatever the client
+// claims), rate-limit ~1 message per 2s via the row-locked SQL
+// function neighborhood_record_chat (same pattern as moves —
+// in-memory limits don't survive serverless), INSERT into
+// neighborhood_messages (moderation trail + log backfill),
+// then broadcast a "chat" event on the room's Realtime
+// channel.
 // GET ?room=<id>: recent history, oldest → newest, for the
 // chat log backfill on join. Both admin-gated (404) like every
 // other neighborhood route.
@@ -107,7 +110,7 @@ export async function POST(request) {
 
     const { data: row, error: readErr } = await supabase
       .from(TABLE)
-      .select("id, username, room, muted")
+      .select("id, username, room, muted, kicked_until")
       .eq("id", playerId)
       .maybeSingle();
     if (readErr) throw readErr;
@@ -115,6 +118,13 @@ export async function POST(request) {
       return NextResponse.json(
         { error: "Join the room first.", code: "not_joined" },
         { status: 404 }
+      );
+    }
+    const ban = activeBan(row);
+    if (ban) {
+      return NextResponse.json(
+        { error: ban.message, code: "kicked", until: ban.until },
+        { status: 403 }
       );
     }
     if (row.muted) {

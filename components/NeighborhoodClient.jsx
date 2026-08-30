@@ -9,6 +9,9 @@
 // mount. Join rejections route back here gracefully:
 //   name_taken / bad_name → creator with the reason on top
 //   room_full             → a "square is full" screen with retry
+//   kicked                → the removed screen (milestone 7),
+//                           also reached live when the
+//                           commissioner kicks mid-session
 // Identity is per-browser by design (see lib/neighborhoodPlayer).
 // ============================================================
 
@@ -21,6 +24,7 @@ export default function NeighborhoodClient({ preview }) {
   const [view, setView] = useState("loading");
   const [player, setPlayer] = useState(null);
   const [joinError, setJoinError] = useState(null);
+  const [removedInfo, setRemovedInfo] = useState(null); // { message, until }
   const [roomNonce, setRoomNonce] = useState(0); // bump to force a fresh join attempt
 
   // localStorage is browser-only, so route after mount.
@@ -39,6 +43,38 @@ export default function NeighborhoodClient({ preview }) {
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="text-sm text-gray-500 dark:text-gray-400">
           Loading the neighborhood…
+        </p>
+      </div>
+    );
+  }
+
+  if (view === "removed") {
+    return (
+      <div className="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center px-4 text-center">
+        <h1 className="font-display text-2xl font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100">
+          You were removed from the neighborhood
+        </h1>
+        <p className="mt-3 text-sm text-gray-600 dark:text-gray-300">
+          {(removedInfo && removedInfo.message) ||
+            "The commissioner removed you from the neighborhood for a little while. Take a breather and try again soon."}
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setRemovedInfo(null);
+              setJoinError(null);
+              setRoomNonce((n) => n + 1);
+              setView("room");
+            }}
+            className="min-h-[44px] rounded-md bg-espn px-5 font-display text-sm uppercase tracking-widest text-white transition-opacity hover:opacity-90"
+          >
+            Try Again
+          </button>
+        </div>
+        <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+          If the timeout is still running you&apos;ll land right back here —
+          the message above says roughly how long is left.
         </p>
       </div>
     );
@@ -88,10 +124,17 @@ export default function NeighborhoodClient({ preview }) {
         player={player}
         preview={preview}
         onEditCharacter={() => setView("creator")}
+        onRemoved={(info) => {
+          setRemovedInfo(info || null);
+          setView("removed");
+        }}
         onJoinFailed={(code, message) => {
           if (code === "room_full") {
             setJoinError(message);
             setView("full");
+          } else if (code === "kicked") {
+            setRemovedInfo({ message });
+            setView("removed");
           } else {
             // name_taken / bad_name → back to the creator with
             // the reason, so they can pick another name.

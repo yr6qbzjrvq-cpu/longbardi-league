@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/supabase";
 import { canSeeNeighborhood } from "@/lib/neighborhoodAccess";
-import { TABLE, broadcastToRoom } from "@/lib/neighborhood/multiplayerServer";
+import { TABLE, broadcastToRoom, noBanFilter } from "@/lib/neighborhood/multiplayerServer";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,10 @@ export const dynamic = "force-dynamic";
 // Deletes the player's row and tells the room, so peers drop
 // the avatar immediately instead of waiting for the presence
 // timeout or the 75s stale prune. Sent with keepalive on tab
-// close; harmless to call twice.
+// close; harmless to call twice. A row carrying a live timed
+// ban (milestone 7) is spared — the row IS the ban record, and
+// deleting it here would let a kicked player erase their own
+// timeout with one API call.
 // ============================================================
 
 export async function POST(request) {
@@ -38,6 +41,7 @@ export async function POST(request) {
       .from(TABLE)
       .delete()
       .eq("id", playerId)
+      .or(noBanFilter())
       .select("id, room");
     if (error) throw error;
     if (data && data.length > 0 && data[0].room) {

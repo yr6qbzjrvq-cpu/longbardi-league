@@ -6,6 +6,7 @@ import { findPath, getNavGrid } from "@/lib/neighborhood/pathing";
 import { currentPosition } from "@/lib/neighborhood/movement";
 import {
   TABLE,
+  activeBan,
   broadcastToRoom,
   toWirePlayer,
 } from "@/lib/neighborhood/multiplayerServer";
@@ -31,6 +32,9 @@ export const dynamic = "force-dynamic";
 //   4. stores the new path + start timestamp and broadcasts it
 //      on the room channel; every peer runs the identical
 //      constant-speed simulation.
+// A row serving a timed ban (milestone 7) is refused before
+// any of that — kicked players cannot move, whatever their
+// client claims.
 // ============================================================
 
 // The 3-moves-per-1000ms window itself lives in the SQL
@@ -62,7 +66,9 @@ export async function POST(request) {
 
     const { data: row, error: readErr } = await supabase
       .from(TABLE)
-      .select("id, username, avatar, room, x, y, path, path_started_at, move_times")
+      .select(
+        "id, username, avatar, room, x, y, path, path_started_at, move_times, kicked_until"
+      )
       .eq("id", playerId)
       .maybeSingle();
     if (readErr) throw readErr;
@@ -70,6 +76,14 @@ export async function POST(request) {
       return NextResponse.json(
         { error: "Join the room first.", code: "not_joined" },
         { status: 404 }
+      );
+    }
+
+    const ban = activeBan(row);
+    if (ban) {
+      return NextResponse.json(
+        { error: ban.message, code: "kicked", until: ban.until },
+        { status: 403 }
       );
     }
 

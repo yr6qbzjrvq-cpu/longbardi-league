@@ -9,6 +9,7 @@ import { getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import {
   TABLE,
   PLAYER_ID_RE,
+  activeBan,
   broadcastToRoom,
   pruneStale,
   listActivePlayers,
@@ -32,8 +33,11 @@ export const dynamic = "force-dynamic";
 // (milestone 6): capacity is enforced on the target room, you
 // appear at its spawn (or the validated `entry` door point),
 // and the room you left gets a "leave" broadcast so nobody
-// ghosts there. Errors carry a machine `code` the client
-// routes on: bad_name / room_full / name_taken / bad_room.
+// ghosts there. A live timed ban (milestone 7: the kicked row
+// lingers as the ban record) bounces the join with code
+// "kicked" before anything else. Errors carry a machine `code`
+// the client routes on: bad_name / room_full / name_taken /
+// bad_room / kicked.
 // ============================================================
 
 export async function POST(request) {
@@ -70,8 +74,24 @@ export async function POST(request) {
       );
     }
 
-    // Tidy first so dead rows never hold a name or a seat.
+    // Tidy first so dead rows never hold a name or a seat
+    // (rows with a live ban survive the prune on purpose).
     await pruneStale(supabase);
+
+    // Serving a timeout? The door stays shut until it lapses.
+    const { data: myRow, error: myErr } = await supabase
+      .from(TABLE)
+      .select("id, kicked_until")
+      .eq("id", playerId)
+      .maybeSingle();
+    if (myErr) throw myErr;
+    const ban = activeBan(myRow);
+    if (ban) {
+      return NextResponse.json(
+        { error: ban.message, code: "kicked", until: ban.until },
+        { status: 403 }
+      );
+    }
 
     const { data: active, error: readErr } = await supabase
       .from(TABLE)
@@ -143,6 +163,7 @@ export async function POST(request) {
       path: [],
       path_started_at: null,
       last_seen: nowIso,
+      kicked_until: null, // a lapsed ban is spent — clear it
     };
     const { error: upsertErr } = await supabase.from(TABLE).upsert(row);
     if (upsertErr) {

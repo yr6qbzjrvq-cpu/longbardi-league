@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/supabase";
 import { canSeeNeighborhood } from "@/lib/neighborhoodAccess";
-import { TABLE } from "@/lib/neighborhood/multiplayerServer";
+import { TABLE, noBanFilter } from "@/lib/neighborhood/multiplayerServer";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,10 @@ export const dynamic = "force-dynamic";
 // window (75s) that capacity and username-uniqueness checks
 // use. Answers ok:false/not_joined (with a 200, so the client
 // treats it as data, not an error) when the row was pruned —
-// the client then quietly rejoins.
+// the client then quietly rejoins. A kicked row (milestone 7)
+// never gets its last_seen bumped: the ban-record row must
+// stay inactive, so a kicked client also lands on not_joined,
+// tries to rejoin, and gets the "kicked" answer there.
 // ============================================================
 
 export async function POST(request) {
@@ -39,6 +42,7 @@ export async function POST(request) {
       .from(TABLE)
       .update({ last_seen: new Date().toISOString() })
       .eq("id", playerId)
+      .or(noBanFilter())
       .select("id");
     if (error) throw error;
     if (!data || data.length === 0) {

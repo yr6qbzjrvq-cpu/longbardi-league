@@ -1040,9 +1040,15 @@ export default function NeighborhoodRoom({
         moving = !adv.done;
         if (adv.done) s.walk = null;
       }
-      if (!moving && s.walking && s.pendingExit) {
-        // arrived at a door — step through (or nudge if that
-        // room isn't in the registry yet)
+      if (!moving && s.pendingExit) {
+        // Arrived at a door — step through (or nudge if that
+        // room isn't in the registry yet). Deliberately NOT
+        // gated on s.walking: a rAF stall (hidden tab, phone
+        // jank, screenshot) can swallow the whole wall-clock
+        // walk in one frame gap, so the completion frame may
+        // be the FIRST frame this walk is ever processed —
+        // pendingExit only exists while a door walk is in
+        // flight, so firing here is always what the tap meant.
         const exit = s.pendingExit;
         s.pendingExit = null;
         if (exit.roomId && doorFnRef.current) {

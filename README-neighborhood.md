@@ -7,7 +7,9 @@ Fast Food Place and the Sports Bar, and chat with whoever's around — realtime
 multiplayer, original procedural art (every pixel drawn in canvas code, no
 image assets), phone-friendly.
 
-Built across milestones 1–7; this file is the operator's manual.
+Built across milestones 1–8; this file is the operator's manual. (And if
+someone in the Sports Bar winks at you: yes, the rumors are true — see "The
+secret room chain" below.)
 
 ---
 
@@ -224,7 +226,49 @@ Then add to the Town Square's `exits` an entry with `roomId: "arcade"` (and an
 procedural vectors in the flat-fill + soft-outline house style; `walkable` and
 `footprint` describe FEET space (lower on screen = closer); spawn/arrive
 points must sit inside the walkable polygon (the join API validates entry
-points and falls back to spawn).
+points and falls back to spawn). Two optional keys power the secret chain
+(milestone 8): `interact[]` and `exits[].requiresFlag` — see the next
+section.
+
+## The secret room chain (milestone 8)
+
+The Sports Bar hides a three-room easter egg behind its restroom door:
+
+1. **Restroom** (`restroom`, cap 8) — door on the bar's back wall, right of
+   the dartboard. Tap the toilet in the stall and the wall it's mounted on
+   spins 180° into a brick tunnel mouth.
+2. **Hidden Hallway** (`hidden-hallway`, cap 8) — through the tunnel. At the
+   far end: a riveted steel blast door with a number pad. Tapping it opens a
+   full-screen keypad; the code is **2723**. Wrong codes flash ACCESS DENIED
+   and shake. The right one rolls the door open.
+3. **Mission Control** (`mission-control`, cap 12) — the football bunker.
+   Dark ops palette, operator consoles, and ONE big wall screen front and
+   center. The screen's inner surface is the exported `MISSION_SCREEN` rect
+   in `lib/neighborhood/rooms.js` — **exactly 16:9 (608 × 342 world px)**.
+   Nothing plays on it yet (standby art in `drawBigBoard`); future football
+   feeds should draw inside that rect.
+
+How it's wired:
+
+- Two room-config keys, both read by the engine
+  (`components/NeighborhoodRoom.jsx`): `interact[]` — tappable hotspots
+  where `type: "reveal"` flips a flag instantly and `type: "keypad"` opens
+  the full-screen keypad and flips the flag on the right `code` — and
+  `exits[].requiresFlag`, which makes a door answer taps only once that
+  flag is set. Props animate off the flag's trigger time (the spinning
+  wall, the sliding blast door).
+- Discovery is **per-player, per-visit client state** (`s.flags` in the
+  engine): peers don't see your wall spin, and a reload closes everything
+  again. Deliberate — it keeps the reveal magical for each player and adds
+  zero server surface.
+- The three rooms are ordinary registry rooms: separate Realtime channels,
+  join-API capacity checks, room-scoped chat and moderation all work in
+  them like anywhere else. They're only "secret" in the UI.
+- **The keypad code lives in client code** (`interact[].code` in the room
+  registry). That's theater for a friendly-league easter egg, not
+  security — anyone reading the bundle can find it, and the rooms are
+  joinable by id through the API regardless. Don't gate anything real this
+  way.
 
 ## Flipping NEIGHBORHOOD_PUBLIC — read before going league-wide
 
@@ -249,7 +293,7 @@ with the link. **Do these first:**
    and rate-limits spam, but a motivated leaguemate can script their own
    client. That's the accepted bar for HSPN games (like the leaderboards) —
    fine for friends, not for strangers.
-3. **Capacity + free-tier headroom.** Rooms cap at 24/12/12/16 by config.
+3. **Capacity + free-tier headroom.** Rooms cap at 24/12/12/16 by config (the secret chain adds 8/8/12).
    Every walk tap is an API call + broadcast; the Postgres instance is a
    nano and Supabase free tier caps Realtime concurrency and messages. A
    full league night is fine; a public link on the internet is not.

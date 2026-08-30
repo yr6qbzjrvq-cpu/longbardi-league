@@ -1,7 +1,7 @@
 "use client";
 
 // ============================================================
-// HSPNeighborhood — room engine (multiplayer + doors, m4-m6)
+// HSPNeighborhood — room engine (multiplayer + doors, m4-m7)
 // ------------------------------------------------------------
 // Renders one room config from lib/neighborhood/rooms.js on a
 // <canvas>:
@@ -13,9 +13,11 @@
 //     avatar walks INSTANTLY on the locally computed path
 //     while the destination goes to /api/neighborhood/move,
 //     which validates with the same pathing module and
-//     broadcasts; peers are rendered DETERMINISTICALLY from
-//     (x, y, path, startedAt) + the server clock, so a hidden
-//     tab or a late joiner lands on the exact same positions
+//     broadcasts; EVERY avatar — peers and (milestone 7) your
+//     own — is rendered DETERMINISTICALLY from
+//     (origin, path, startedAt) with the shared constant-speed
+//     math, so a tab that sat hidden (rAF frozen) snaps to
+//     where you really are the moment it's visible again
 //   • Y-depth sorting of props + every player each frame
 //   • camera follow with room clamping, DPR-aware sizing,
 //     dark/light palettes
@@ -24,13 +26,17 @@
 //     there — full rooms bounce you back with a toast), swaps
 //     world + Realtime channel + peers under a short fade,
 //     and replays the new room's chat history in the log
+//   • moderation (milestone 7): a "kicked" broadcast for us
+//     tears the connection down and hands off to the removed
+//     screen; "chat_delete" pulls a message out of the log and
+//     any still-visible bubble
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
 import { drawAvatar, normalizeAvatar } from "@/lib/neighborhoodAvatar";
 import { getRoom } from "@/lib/neighborhood/rooms";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
-import { WALK_SPEED, advanceAlongPath } from "@/lib/neighborhood/movement";
+import { advanceAlongPath } from "@/lib/neighborhood/movement";
 import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
 import { CHAT_MAX, validateChatText, bubbleDurationMs } from "@/lib/neighborhood/chat";
 
@@ -300,7 +306,13 @@ function drawScene(ctx, canvas, s, theme, t) {
   }
 }
 
-export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJoinFailed }) {
+export default function NeighborhoodRoom({
+  player,
+  preview,
+  onEditCharacter,
+  onJoinFailed,
+  onRemoved,
+}) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const themeRef = useRef("light");
@@ -327,7 +339,10 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       avatar: normalizeAvatar(player?.avatar),
       name: player?.username || "You",
       pos: { ...room.spawn },
-      path: [],
+      // Own walk = the SAME deterministic shape peers use:
+      // { origin, path, startedAt } advanced by wall-clock time
+      // (milestone 7 — hidden tabs catch up on return).
+      walk: null,
       walking: false,
       walkT: 0,
       cam: null,
@@ -397,6 +412,24 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     });
   }
 
+  // The kicked handoff: tear the connection down WITHOUT a
+  // /leave (the row is now the ban record server-side) and let
+  // the parent swap in the removed screen.
+  const onRemovedRef = useRef(null);
+  onRemovedRef.current = onRemoved;
+  function handleKicked(payload) {
+    const s = sRef.current;
+    const conn = s.conn;
+    s.conn = null;
+    s.moveTarget = null;
+    if (s.moveTimer) {
+      clearTimeout(s.moveTimer);
+      s.moveTimer = null;
+    }
+    if (conn) conn.detach();
+    if (onRemovedRef.current) onRemovedRef.current(payload || {});
+  }
+
   // Event handlers for ONE connection generation. Every event
   // checks it still belongs to the room the player is in, so
   // nothing from a room we already left can smudge the current
@@ -448,6 +481,18 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
         if (!live() || !m || !m.text) return;
         pushBubble(m.playerId, m.id, m.text);
         appendLog(m);
+      },
+      // The commissioner deleted a message — drop it from the
+      // log and any bubble still floating (milestone 7).
+      onChatDelete: (payload) => {
+        if (!live() || !payload || !payload.id) return;
+        if (payload.playerId) dropBubble(payload.playerId, payload.id);
+        setLog((prev) => prev.filter((e) => e.id !== payload.id));
+      },
+      // The commissioner removed US (milestone 7).
+      onKicked: (payload) => {
+        if (s.destroyed || gen !== s.connGen) return;
+        handleKicked(payload);
       },
     };
   }
@@ -508,7 +553,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
         // spot server-side while we reset to spawn locally.
         const self = conn.self;
         const atSpawn =
-          s.path.length === 0 &&
+          !s.walk &&
           Math.hypot(s.pos.x - s.room.spawn.x, s.pos.y - s.room.spawn.y) < 2;
         if (self) {
           const serverMoved =
@@ -519,14 +564,21 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
           } else if (!atSpawn) {
             // We walked while the join was in flight — tell the
             // server where we're headed so peers catch up.
-            const dest = s.path.length ? s.path[s.path.length - 1] : s.pos;
+            const dest = s.walk
+              ? s.walk.path[s.walk.path.length - 1]
+              : s.pos;
             queueMoveSend(dest.x, dest.y);
           }
         }
       } catch (err) {
         if (s.destroyed) return;
         const code = err && err.code;
-        if (code === "room_full" || code === "name_taken" || code === "bad_name") {
+        if (
+          code === "room_full" ||
+          code === "name_taken" ||
+          code === "bad_name" ||
+          code === "kicked"
+        ) {
           if (onJoinFailed) onJoinFailed(code, err.message);
         } else {
           setToast({
@@ -598,7 +650,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       s.bgKey = "";
       s.peers.clear();
       s.bubbles.clear();
-      s.path = [];
+      s.walk = null;
       s.walking = false;
       s.walkT = 0;
       s.pendingExit = null;
@@ -628,6 +680,9 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
           text: `${exit.label} is packed right now — try again in a minute.`,
           id: performance.now(),
         });
+      } else if (err && err.code === "kicked") {
+        // Banned mid-session: the old room is done too.
+        handleKicked({ message: err.message });
       } else if (!s.destroyed) {
         setToast({
           text: "That door seems stuck — give it another try.",
@@ -726,6 +781,14 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
     try {
       const res = await s.conn.chat(v.value);
       const m = res && res.message;
+      // carry the server id onto the bubble too, so a later
+      // chat_delete can find it
+      if (m && m.id) {
+        const list = s.bubbles.get(s.selfId);
+        if (list) {
+          for (const b of list) if (b.id === localId) b.id = m.id;
+        }
+      }
       setLog((prev) =>
         prev.map((entry) =>
           entry.id === localId
@@ -783,27 +846,27 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
 
-      // own avatar: incremental constant-speed movement (instant
-      // response to taps; identical math to advanceAlongPath)
-      let remaining = WALK_SPEED * dt;
-      while (remaining > 0 && s.path.length) {
-        const next = s.path[0];
-        const dx = next.x - s.pos.x;
-        const dy = next.y - s.pos.y;
-        const d = Math.hypot(dx, dy);
-        if (d <= remaining) {
-          s.pos.x = next.x;
-          s.pos.y = next.y;
-          s.path.shift();
-          remaining -= d;
-        } else {
-          s.pos.x += (dx / d) * remaining;
-          s.pos.y += (dy / d) * remaining;
-          remaining = 0;
-        }
+      // Own avatar: deterministic constant-speed advance from
+      // the tap-time origin + timestamp — the SAME math peers
+      // and the server run (advanceAlongPath), so a tab that
+      // sat hidden (rAF frozen) lands exactly where the server
+      // thinks we are the moment it becomes visible again
+      // (milestone-7 fix — was incremental dt stepping).
+      let moving = false;
+      if (s.walk) {
+        const elapsed = (Date.now() - s.walk.startedAt) / 1000;
+        const adv = advanceAlongPath(
+          s.walk.origin.x,
+          s.walk.origin.y,
+          s.walk.path,
+          elapsed
+        );
+        s.pos.x = adv.x;
+        s.pos.y = adv.y;
+        s.walkT = elapsed;
+        moving = !adv.done;
+        if (adv.done) s.walk = null;
       }
-      const moving = s.path.length > 0;
-      if (moving) s.walkT += dt;
       if (!moving && s.walking && s.pendingExit) {
         // arrived at a door — step through (or nudge if that
         // room isn't in the registry yet)
@@ -971,7 +1034,11 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
       }
       return;
     }
-    s.path = path;
+    s.walk = {
+      origin: { x: s.pos.x, y: s.pos.y },
+      path,
+      startedAt: Date.now(),
+    };
     s.marker = { x: spot.x, y: spot.y, t: performance.now() };
     // own walk starts NOW; the server validates the same
     // destination and re-broadcasts for everyone else.
@@ -1002,7 +1069,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
             type="button"
             onClick={() => setChatOpen((v) => !v)}
             aria-pressed={chatOpen}
-            className={`min-h-[40px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest transition-colors ${
+            className={`min-h-[44px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest transition-colors ${
               chatOpen
                 ? "bg-espn text-white"
                 : "text-espn hover:bg-espn hover:text-white"
@@ -1013,7 +1080,7 @@ export default function NeighborhoodRoom({ player, preview, onEditCharacter, onJ
           <button
             type="button"
             onClick={onEditCharacter}
-            className="min-h-[40px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+            className="min-h-[44px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
           >
             Edit Character
           </button>

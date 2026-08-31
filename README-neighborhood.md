@@ -37,10 +37,12 @@ chain" below.)
 | Realtime topic names (shared) | `lib/neighborhood/topics.js` |
 | Realtime token minting (server) | `lib/neighborhood/realtimeAuth.js` |
 | Broadcaster grants (sign/verify) | `lib/neighborhood/broadcastGrant.js` |
+| TURN relay credentials (server) | `lib/neighborhood/turnCredentials.js` |
 | Channel RLS policies (run once) | `supabase/neighborhood_realtime_auth.sql` |
 | Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,token}/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
+| ICE / TURN credentials (any player in Mission Control) | `app/api/neighborhood/ice/route.js` |
 | Moderation API (admin-only) | `app/api/neighborhood/admin/route.js` |
 | Moderation screen | `app/admin/neighborhood/page.jsx` + `components/NeighborhoodModeration.jsx` |
 
@@ -69,6 +71,11 @@ SUPABASE_JWT_SECRET=...             # OPTIONAL; Supabase > Settings > JWT Keys >
                                     # Realtime subscribes from "anon key" to
                                     # "token scoped to one room" (see
                                     # "Channel authorization")
+CF_TURN_KEY_ID=...                  # OPTIONAL PAIR; Cloudflare TURN key. With
+CF_TURN_API_TOKEN=...               # both set, the big board works for
+                                    # viewers on cellular. Without them the
+                                    # site behaves exactly as it did before
+                                    # (STUN only) — see "Relay (TURN)"
 ```
 
 Without the Supabase vars the world still loads and you can walk solo — the
@@ -211,6 +218,43 @@ and stale ones die with the page (and in five minutes regardless).
 say hello, and a forged "I stopped" is ignored unless it comes from the
 broadcaster that viewer actually verified.
 
+### Relay (TURN) — how the big board works on cellular
+
+STUN only tells each side what its own public address looks like; the two
+peers still have to reach each other directly. On home wifi they can. On
+**cellular they usually can't**: carrier-grade NAT is symmetric, so the phone
+gets a different public port for every destination and the address STUN
+learned is useless to the broadcaster. That connection sat at "connecting",
+then failed, then toasted "that connection needs a relay". Milestone 11 adds
+the relay.
+
+- **Where the credential comes from.** `POST /api/neighborhood/ice` calls
+  Cloudflare's TURN API (`rtc.live.cloudflare.com/v1/turn/keys/<id>/
+  credentials/generate-ice-servers`) with the two env vars and hands the
+  browser back a short-lived username/password plus the relay URLs. The key
+  itself never leaves the server.
+- **Who may ask.** The gameplay gate + same-origin, then a player id with an
+  **active, unbanned row standing in Mission Control**. Plus a sliding-window
+  rate limit (12 per player / 40 per IP per 5 min, per lambda). Farming it is
+  pointless anyway: the server mints **one** credential set with a 4h TTL and
+  serves the same cached copy to everyone, so a thousand calls cost Cloudflare
+  one API call.
+- **Who asks.** Both halves of the mesh, right before building a peer
+  connection (`fetchIceServers()` in `lib/neighborhood/screenshare.js`),
+  cached for the page. Viewers pre-warm it when they walk in and when a
+  broadcast starts, so no handshake waits on it.
+- **When it isn't configured** — no env vars, Cloudflare down, timeout, rate
+  limited, Supabase unreachable — every path returns the plain STUN list,
+  which is byte-for-byte what shipped before TURN existed. `GET
+  /api/neighborhood/ice` answers `{ configured: false }` and the wifi path is
+  untouched. This is a strict addition; nothing regresses without the vars.
+- **Cost.** $0.05/GB with the first 1,000 GB per month free. Relay is used
+  only for peers that can't connect directly, and only for the megabytes that
+  actually flow — a league night is comfortably inside the free tier.
+- **The toast now says two different things.** Failure with no relay
+  configured still says "that connection needs a relay" (accurate: it does).
+  Failure *with* a relay is a fluke, so it says to walk out and back in.
+
 ## API routes
 
 Gameplay routes answer **404** unless `NEIGHBORHOOD_PUBLIC` is true or the
@@ -245,6 +289,9 @@ player: it only ever says yes or no about a grant the caller already holds.
   browser broadcast? POST without a nonce: authorize a capture session. POST
   with a viewer's nonce: mint that viewer's grant.
 - `POST /api/neighborhood/broadcast/verify` — any player: is this grant real?
+- `GET/POST /api/neighborhood/ice` — GET: does this deployment have a relay?
+  POST: ICE servers (Cloudflare TURN credentials when configured, STUN
+  otherwise) for one active player standing in Mission Control.
 - `GET/POST /api/neighborhood/admin` — moderation snapshot / actions `mute`,
   `kick` (default 10 min, max 24h), `unkick`, `delete_message`, `prune`.
 
@@ -485,7 +532,14 @@ comfortable. A link that escapes into the wild is not — if that happens, flip
   are not standing in** using the anon key from the bundle. They see positions
   and chat — the same things they would see by walking in, minus being seen.
   Setting `SUPABASE_JWT_SECRET` and tightening the policy closes it.
-- **No TURN server for the big board.** A viewer behind a symmetric NAT sits
-  at "connecting" and then fails, with a toast saying so. Adding a TURN entry
-  to `ICE_SERVERS` in `lib/neighborhood/screenshare.js` is the one-line fix
-  when someone actually hits it.
+- **The relay is only as configured as the environment.** With
+  `CF_TURN_KEY_ID` + `CF_TURN_API_TOKEN` set, viewers behind symmetric NAT
+  (cellular) connect through Cloudflare TURN. Without them the old behaviour
+  stands: those viewers sit at "connecting", fail, and get the "needs a relay"
+  toast. `GET /api/neighborhood/ice` tells you which world a deploy is in.
+- **TURN credentials are shared and not individually revocable.** One minted
+  set is cached and served to every player in Mission Control for up to four
+  hours, which is what makes the route unfarmable but also means a leaguemate
+  who digs one out of their own browser could relay through it until it
+  expires. Bounded by the TTL and the 1,000 GB free tier; if that ever
+  matters, mint per player and use Cloudflare's revoke endpoint.

@@ -61,6 +61,7 @@ import {
   createViewer,
   checkBroadcastAuth,
   screenShareSupported,
+  screenViewSupported,
 } from "@/lib/neighborhood/screenshare";
 
 const AVATAR_SCALE = 0.92; // world size of players in rooms
@@ -630,6 +631,22 @@ export default function NeighborhoodRoom({
     setFeed(state);
   }
 
+  // iOS Safari refuses play() on an element that is not being
+  // rendered, and never retries on its own. The board is still
+  // display:none at the moment the track arrives — the rAF loop
+  // only reveals it on the NEXT frame — so a single play() can
+  // lose that race and leave a phone staring at a dead
+  // rectangle. Ask again, briefly, until the picture is running.
+  function playVideo(v, tries) {
+    if (!v || !v.srcObject) return;
+    const played = v.play();
+    if (played && played.catch) {
+      played.catch(() => {
+        if (tries > 0) setTimeout(() => playVideo(v, tries - 1), 350);
+      });
+    }
+  }
+
   function attachStream(stream) {
     const v = videoRef.current;
     if (!v) return;
@@ -640,8 +657,7 @@ export default function NeighborhoodRoom({
       // stays muted for good — unmuting it would feed his own
       // tab audio straight back at him.
       v.muted = true;
-      const played = v.play();
-      if (played && played.catch) played.catch(() => {});
+      playVideo(v, 12);
     } else {
       v.srcObject = null;
       v.muted = true;
@@ -701,7 +717,11 @@ export default function NeighborhoodRoom({
   // nothing is left running.
   function attachScreen(conn, targetRoomId) {
     detachScreen();
-    if (targetRoomId !== MISSION_ROOM_ID || !screenShareSupported()) return;
+    // WATCHING only needs a peer connection. Gating this on
+    // screenShareSupported() (which also demands getDisplayMedia,
+    // a desktop-only capture API) is what kept every phone on
+    // "AWAITING FEED" — no viewer, so no hello, so no offer.
+    if (targetRoomId !== MISSION_ROOM_ID || !screenViewSupported()) return;
     const selfId = sRef.current.selfId;
     const sc = { conn, roomId: targetRoomId, viewer: null, broadcaster: null };
     sc.viewer = createViewer({
@@ -817,8 +837,7 @@ export default function NeighborhoodRoom({
       const v = videoRef.current;
       if (v) {
         v.muted = false;
-        const played = v.play();
-        if (played && played.catch) played.catch(() => {});
+        playVideo(v, 4);
       }
       setSoundOn(true);
       return;

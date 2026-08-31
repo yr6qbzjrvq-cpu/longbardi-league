@@ -62,6 +62,7 @@ import {
   checkBroadcastAuth,
   screenShareSupported,
   screenViewSupported,
+  relayAvailable,
 } from "@/lib/neighborhood/screenshare";
 
 const AVATAR_SCALE = 0.92; // world size of players in rooms
@@ -727,6 +728,7 @@ export default function NeighborhoodRoom({
     sc.viewer = createViewer({
       conn,
       selfId,
+      roomId: targetRoomId,
       onStream: (stream) => {
         // The broadcaster watches his own local preview; don't
         // let a loopback offer overwrite it.
@@ -736,8 +738,14 @@ export default function NeighborhoodRoom({
       onState: (state) => {
         if (sharingRef.current) return;
         if (state === "failed") {
+          // Two different failures, two different sentences.
+          // Without a relay configured, a cellular viewer will
+          // never connect and should be told so; with one, a
+          // failure is a fluke worth retrying.
           setToast({
-            text: "Couldn't reach the feed — that connection needs a relay.",
+            text: relayAvailable()
+              ? "Lost that connection — walk out and back in to retry."
+              : "Couldn't reach the feed — that connection needs a relay.",
             id: performance.now(),
           });
           applyFeed("standby");

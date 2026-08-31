@@ -240,7 +240,11 @@ it against its own nonce before it looks at the SDP. What the channel decides
 is who can be *reached*; what the grant decides is who is *believed*. The
 broadcaster's own sanity check — refuse any id that is not present — now reads
 presence on the shared board channel (everyone watching, in either room)
-instead of one room's roster.
+instead of one room's roster. That check is a HINT, not a gate: this
+deployment's Realtime currently reports no presence at all (see "Known
+limitations"), so when presence says nothing the broadcaster answers the hello
+anyway. It has to be that way round — presence is a claim a client publishes,
+while the grant is a signature only the server can make.
 
 ### Relay (TURN) — how the big board works on cellular
 
@@ -606,7 +610,10 @@ one where nothing has to know how many rooms there are:
   viewer nonce, one capture.
 - Presence moved with it. The broadcaster's "I only answer people who are
   actually here" check reads presence on the board channel — everyone watching
-  in either room — instead of one room's roster.
+  in either room — instead of one room's roster. It is deliberately a hint:
+  when presence reports nobody (which is what this deployment does today) the
+  hello is answered anyway, because presence was never the thing keeping a
+  stranger's picture off the wall — the grant is.
 - `/api/neighborhood/ice` now hands relay credentials to a player standing in
   **any** room with a screen (still: active row, unbanned, in the room it
   claims, rate limited). A bar viewer on cellular needs TURN exactly as much
@@ -650,6 +657,17 @@ when Austin stops, which is what ends a broadcast anyway.
 - **A broadcast starts in Mission Control only.** Both screens show it, but
   the Share My Screen button lives in the bunker; Austin walks in there to go
   on air. Deliberate — one room owns the permission.
+- **Realtime presence is reporting nothing on this project.** Found during the
+  milestone-12 live test: a raw client can join `neighborhood:<room>` or the
+  screen channel and track presence fine, but the app's own channels report an
+  empty presence list on both topics (a Supabase client/server version thing —
+  `@supabase/supabase-js` floats on `^2.47.10` with no lockfile, so a deploy
+  can pick up a newer client whenever it rebuilds). The screen share no longer
+  depends on it (presence is a hint), and the room's `enabled: true` request
+  should restore it where the server honours the flag. What still degrades
+  quietly: peers rely on presence join/leave as a backstop for avatars
+  appearing and disappearing — moves, chat and the join roster are unaffected,
+  so the world plays normally. Worth pinning the dependency and revisiting.
 - **On a phone narrower than ~360 CSS px, Mission Control still crops.** With
   `fitRoom` fitting both axes, the Sports Bar screen is fully visible at every
   viewport tested (down to 320px wide) and the Mission Control board at 375px

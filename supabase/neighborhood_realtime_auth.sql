@@ -13,9 +13,19 @@
 -- with the server never seeing it. These policies close that.
 --
 -- THE SHAPE
--- Two topics per room (lib/neighborhood/topics.js):
---   neighborhood:<room>      gameplay
---   neighborhood-rtc:<room>  screen-share handshake
+-- Two topics (lib/neighborhood/topics.js):
+--   neighborhood:<room>      gameplay, one per room
+--   neighborhood-rtc:<id>    screen-share handshake
+--
+-- MILESTONE 12: the rtc topic is keyed by SCREEN CHANNEL, not
+-- by room. One broadcast lights up every room that has a
+-- screen (Mission Control's big board and the Sports Bar's
+-- screen over the counter), and those rooms share one
+-- signaling topic so the broadcaster's mesh can span both.
+-- A minted token therefore carries a second claim, `nb_screen`,
+-- naming that channel; the read/write rules below are otherwise
+-- untouched, and in `shared` mode (no SUPABASE_JWT_SECRET, no
+-- claims at all) nothing here changes anything.
 --
 --   * READ (select) — allowed on both, for the anon key and for a
 --     token minted by /api/neighborhood/token. A minted token
@@ -43,8 +53,14 @@ drop policy if exists "neighborhood realtime presence" on realtime.messages;
 drop policy if exists "neighborhood realtime signaling" on realtime.messages;
 
 -- Is this topic one of ours, and may the presented token see it?
--- A token with an nb_room claim is pinned to that room; a token
+-- A token with an nb_room claim is pinned to that room (plus the
+-- shared screen-share channel its nb_screen claim names); a token
 -- without one (the anon key) may read any neighborhood topic.
+--
+-- IF YOU TURN ON SUPABASE_JWT_SECRET, RUN THIS FILE FIRST. The
+-- nb_screen branch is what lets a scoped token subscribe to the
+-- shared big-board signaling topic; without it a scoped browser
+-- would sit on AWAITING FEED with no picture, in both rooms.
 create or replace function public.neighborhood_topic_allowed(p_topic text)
 returns boolean
 language sql
@@ -56,6 +72,10 @@ as $$
       (auth.jwt() ->> 'nb_room') is null
       or p_topic = 'neighborhood:' || (auth.jwt() ->> 'nb_room')
       or p_topic = 'neighborhood-rtc:' || (auth.jwt() ->> 'nb_room')
+      or (
+        (auth.jwt() ->> 'nb_screen') is not null
+        and p_topic = 'neighborhood-rtc:' || (auth.jwt() ->> 'nb_screen')
+      )
     );
 $$;
 

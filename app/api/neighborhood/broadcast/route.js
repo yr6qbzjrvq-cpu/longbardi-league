@@ -18,6 +18,14 @@ export const dynamic = "force-dynamic";
 // milestone 10 — only the commissioner can produce the token
 // that makes a viewer accept a WebRTC offer.
 //
+// Milestone 12 did NOT widen any of that. A broadcast is still
+// started from Mission Control and a grant still names that
+// room; what changed is who can be reached by it — the Sports
+// Bar's screen shows the same feed, so the viewer that hands
+// its nonce over may be standing in either room. The grant
+// answers "is this really the commissioner", which is a
+// question about the broadcaster, not about the audience.
+//
 // Gated on isAuthed() directly — the same STRICT check the
 // moderation route uses, not canSeeNeighborhood() — so the
 // share button stays commissioner-only now that

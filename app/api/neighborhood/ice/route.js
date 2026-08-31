@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/supabase";
 import { canSeeNeighborhood, sameOrigin } from "@/lib/neighborhoodAccess";
-import { BROADCAST_ROOM_ID } from "@/lib/neighborhood/broadcastGrant";
+import { roomHasScreen } from "@/lib/neighborhood/rooms";
 import {
   TABLE,
   PLAYER_ID_RE,
@@ -30,8 +30,8 @@ export const dynamic = "force-dynamic";
 //
 // GET  → "does this deployment have a relay?" No credentials,
 //        no player context needed. Deploy check.
-// POST → the credential itself, for one player standing in
-//        Mission Control.
+// POST → the credential itself, for one player standing in a
+//        room that has a screen.
 //
 // THE GATE. A TURN credential is bandwidth someone else pays
 // for, so this is not a route to leave lying open now that the
@@ -41,8 +41,12 @@ export const dynamic = "force-dynamic";
 //   2. a well-formed player id that has an ACTIVE row in
 //      neighborhood_players — joined, heartbeating inside the
 //      75s window — and is not serving a kick;
-//   3. that row must be standing in Mission Control, the only
-//      room with a big board;
+//   3. that row must be standing in the room it is asking for,
+//      and that room must have a screen — Mission Control or
+//      the Sports Bar since milestone 12, when one broadcast
+//      started lighting up both. A viewer in the bar needs a
+//      relay for exactly the same reason a viewer in Mission
+//      Control does;
 //   4. a sliding-window rate limit per player and per IP.
 // A stranger with the URL gets 404/400; a leaguemate can ask
 // as often as the limit allows and always receives the same
@@ -133,9 +137,9 @@ export async function POST(request) {
         { status: 400 }
       );
     }
-    if (roomId !== BROADCAST_ROOM_ID) {
+    if (!roomHasScreen(roomId)) {
       return NextResponse.json(
-        { error: "The big board only lives in Mission Control.", code: "bad_room" },
+        { error: "There is no screen in that room.", code: "bad_room" },
         { status: 400 }
       );
     }
@@ -181,7 +185,7 @@ export async function POST(request) {
     // two sort differently as text.
     const seen = row.last_seen ? Date.parse(row.last_seen) : NaN;
     const stale = !Number.isFinite(seen) || seen < Date.now() - ACTIVE_WINDOW_MS;
-    if (stale || row.room !== BROADCAST_ROOM_ID) {
+    if (stale || row.room !== roomId) {
       return NextResponse.json(
         { ok: false, code: "not_in_room", relay: false, iceServers: STUN_ONLY },
         { status: 403 }

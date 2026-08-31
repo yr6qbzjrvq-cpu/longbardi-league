@@ -353,6 +353,18 @@ The Sports Bar hides a three-room easter egg behind its restroom door:
    10). The live feed is a DOM `<video>` re-pinned to that rect every frame,
    so it rides the camera exactly like painted scenery.
 
+   **Watching is not sharing.** Two capability checks, deliberately
+   separate: `screenViewSupported()` (just an `RTCPeerConnection`) decides
+   whether a browser gets a VIEWER, and `screenShareSupported()` (which also
+   needs `getDisplayMedia`, a capture API no mobile browser implements)
+   decides whether it gets the Share My Screen button. They were one check
+   until this was fixed, and the room gated the viewer on the sharing one —
+   which is why every phone sat on AWAITING FEED while desktops watched
+   happily. A phone never built a viewer, so it never sent `rtc-hello`, so it
+   was never offered anything. Nothing to do with signaling, grants or the
+   channel policies. If you ever add a capability gate around the board,
+   check which half of the feature you are gating.
+
 How it's wired:
 
 - Two room-config keys, both read by the engine

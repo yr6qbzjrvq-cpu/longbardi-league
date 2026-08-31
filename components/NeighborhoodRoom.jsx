@@ -36,21 +36,27 @@
 //     plus exits gated by the per-visit flags they set; the
 //     flags live in client state only, so every player
 //     discovers the chain for themselves
-//   • big board (milestone 9): in Mission Control a DOM
-//     <video> is pinned over the canvas to the MISSION_SCREEN
-//     rect and re-positioned in the SAME animation frame as
-//     the draw, so the screen-share stays welded to the wall
-//     through every camera move. Media is peer to peer
+//   • big board (milestone 9, two rooms since 12): in any room
+//     that has a screen — Mission Control's big board and the
+//     Sports Bar's screen over the counter — a DOM <video> is
+//     pinned over the canvas to that room's screen rect
+//     (screenRectFor()) and re-positioned in the SAME
+//     animation frame as the draw, so the screen-share stays
+//     welded to the wall through every camera move. Both rects
+//     are the same 16:9 size and ONE broadcast feeds both
+//     rooms. Media is peer to peer
 //     (lib/neighborhood/screenshare.js); only the commissioner
-//     can start one
+//     can start one, and only from Mission Control
 // ============================================================
 
 import { useEffect, useRef, useState } from "react";
 import { drawAvatar, normalizeAvatar } from "@/lib/neighborhoodAvatar";
 import {
   getRoom,
-  MISSION_SCREEN,
-  setMissionScreenState,
+  screenRectFor,
+  roomHasScreen,
+  setScreenFeedState,
+  BROADCAST_ROOM_ID,
 } from "@/lib/neighborhood/rooms";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import { advanceAlongPath } from "@/lib/neighborhood/movement";
@@ -68,7 +74,7 @@ import {
 const AVATAR_SCALE = 0.92; // world size of players in rooms
 const MIN_ZOOM = 0.55; // keep avatars readable on small phones
 const MAX_ZOOM = 1;
-// Floor for rooms that must fit their whole height (below).
+// Floor for rooms that must fit their whole selves (below).
 // Lower than MIN_ZOOM on purpose: in a short window, showing
 // all of Mission Control beats keeping avatars big.
 const MIN_FIT_ZOOM = 0.4;
@@ -76,7 +82,6 @@ const SIZE_FACTOR = { short: 0.86, medium: 1, tall: 1.14 }; // mirrors drawAvata
 const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
 const LOG_LIMIT = 120; // chat log entries kept in memory
 const FADE_SPEED = 4; // door-transition fade, full swings per second
-const MISSION_ROOM_ID = "mission-control"; // the only room with a big board
 const LONG_PRESS_MS = 550; // hold the feed to go OS fullscreen
 
 // Speech bubbles are drawn in SCREEN pixels (not world units)
@@ -109,18 +114,24 @@ function camAxis(center, view, world) {
 // floor starts at y 452, so on a desktop-shaped viewport (wide
 // => zoom pinned at MAX_ZOOM => a short world-space view) the
 // top of the board sat above the camera's reach and was simply
-// unreachable. Phones never hit it because a narrow viewport
-// zooms out far enough for the whole room to fit.
+// unreachable.
 //
-// So a room can ask to never be cropped vertically with
-// `fitHeight: true`, and we shrink until its full height fits.
-// This only ever zooms OUT relative to the width rule, so no
-// room gets closer than before, and on a phone (where width is
-// already the binding constraint) it changes nothing.
+// So a room can ask to never be cropped with `fitRoom: true`,
+// and we shrink until the WHOLE room fits the viewport — both
+// axes, down to MIN_FIT_ZOOM. Height was the only axis that
+// mattered when Mission Control was the only such room
+// (milestone 10 called the key `fitHeight`); the Sports Bar
+// screen is the same 608px wide in an 800px room, so on a
+// phone the WIDTH clamp is what would crop it — MIN_ZOOM
+// exists to keep avatars readable and would have pinned the
+// zoom too far in. Fitting both axes is the honest version of
+// the same rule: a room that says fitRoom is a room whose art
+// must be seen, and seeing it beats big avatars.
 export function roomZoom(room, viewW, viewH) {
   const byWidth = Math.min(Math.max(viewW / room.width, MIN_ZOOM), MAX_ZOOM);
-  if (!room.fitHeight || !(viewH > 0)) return byWidth;
-  return Math.max(Math.min(byWidth, viewH / room.height), MIN_FIT_ZOOM);
+  if (!room.fitRoom || !(viewH > 0)) return byWidth;
+  const fit = Math.min(viewW / room.width, viewH / room.height);
+  return Math.max(Math.min(byWidth, fit), MIN_FIT_ZOOM);
 }
 
 function roundRectPath(ctx, x, y, w, h, r) {
@@ -628,7 +639,7 @@ export default function NeighborhoodRoom({
   function applyFeed(state) {
     const s = sRef.current;
     s.feedOn = state === "live";
-    setMissionScreenState(state);
+    setScreenFeedState(state);
     setFeed(state);
   }
 
@@ -670,6 +681,11 @@ export default function NeighborhoodRoom({
   function ensureBroadcaster() {
     const sc = screenRef.current;
     if (!sc || sc.broadcaster || !canBroadcastRef.current) return;
+    // Watching happens in every room with a screen; STARTING a
+    // broadcast happens in Mission Control, which is the room
+    // the grant and the admin gate name. (The feed then shows
+    // up on the bar's screen too — same mesh, same grant.)
+    if (sc.roomId !== BROADCAST_ROOM_ID) return;
     sc.broadcaster = createBroadcaster({
       conn: sc.conn,
       selfId: sRef.current.selfId,
@@ -714,7 +730,7 @@ export default function NeighborhoodRoom({
   }
 
   // Wire the screen-share peers to a freshly opened room
-  // connection. Outside Mission Control this just makes sure
+  // connection. In a room with no screen this just makes sure
   // nothing is left running.
   function attachScreen(conn, targetRoomId) {
     detachScreen();
@@ -722,7 +738,7 @@ export default function NeighborhoodRoom({
     // screenShareSupported() (which also demands getDisplayMedia,
     // a desktop-only capture API) is what kept every phone on
     // "AWAITING FEED" — no viewer, so no hello, so no offer.
-    if (targetRoomId !== MISSION_ROOM_ID || !screenViewSupported()) return;
+    if (!roomHasScreen(targetRoomId) || !screenViewSupported()) return;
     const selfId = sRef.current.selfId;
     const sc = { conn, roomId: targetRoomId, viewer: null, broadcaster: null };
     sc.viewer = createViewer({
@@ -1495,7 +1511,10 @@ export default function NeighborhoodRoom({
       // layout, no reflow, cheap on a phone).
       const box = videoBoxRef.current;
       if (box) {
-        if (!s.feedOn || s.room.id !== MISSION_ROOM_ID || !s.cam) {
+        // Whichever screen this room has (both are 16:9 and the
+        // same size, so nothing downstream cares which).
+        const screen = screenRectFor(s.room.id);
+        if (!s.feedOn || !screen || !s.cam) {
           if (box.style.display !== "none") box.style.display = "none";
         } else if (theaterRef.current) {
           box.style.display = "block";
@@ -1504,10 +1523,10 @@ export default function NeighborhoodRoom({
           box.style.transform = "none";
         } else {
           box.style.display = "block";
-          box.style.width = `${MISSION_SCREEN.w}px`;
-          box.style.height = `${MISSION_SCREEN.h}px`;
-          const bx = (MISSION_SCREEN.x - s.cam.x) * s.zoom;
-          const by = (MISSION_SCREEN.y - s.cam.y) * s.zoom;
+          box.style.width = `${screen.w}px`;
+          box.style.height = `${screen.h}px`;
+          const bx = (screen.x - s.cam.x) * s.zoom;
+          const by = (screen.y - s.cam.y) * s.zoom;
           box.style.transform = `translate(${bx.toFixed(2)}px, ${by.toFixed(2)}px) scale(${s.zoom.toFixed(4)})`;
         }
       }
@@ -1678,7 +1697,7 @@ export default function NeighborhoodRoom({
           >
             {chatOpen ? "Hide Log" : "Chat Log"}
           </button>
-          {canBroadcast && roomId === MISSION_ROOM_ID && (
+          {canBroadcast && roomId === BROADCAST_ROOM_ID && (
             <>
               <button
                 type="button"
@@ -1727,8 +1746,8 @@ export default function NeighborhoodRoom({
           aria-label={`${roomName} — tap the ground to walk`}
         />
         {/* Big board feed (milestone 9). Every frame the rAF
-            loop re-pins this to the MISSION_SCREEN rect, so it
-            rides the camera exactly like painted scenery.
+            loop re-pins this to the current room's screen rect,
+            so it rides the camera exactly like painted scenery.
             display/width/height/transform are owned by that
             loop — React only decides what goes INSIDE. */}
         <div
@@ -1737,7 +1756,7 @@ export default function NeighborhoodRoom({
           onPointerUp={feedPointerUp}
           onPointerCancel={feedPointerCancel}
           onContextMenu={(e) => e.preventDefault()}
-          aria-label="Mission Control big board"
+          aria-label="Big screen feed"
           style={{
             display: "none",
             position: "absolute",

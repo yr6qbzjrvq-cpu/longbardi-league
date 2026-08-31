@@ -11,9 +11,10 @@ Built across milestones 1–10; this file is the operator's manual. **It is live
 for the whole league** — `NEIGHBORHOOD_PUBLIC` is true, there is a
 Neighborhood link in the site nav, and anyone with the link can make a
 character and walk in. Moderation, and the ability to put a picture on the
-Mission Control big board, stay commissioner-only. (And if someone in the
-Sports Bar winks at you: yes, the rumors are true — see "The secret room
-chain" below.)
+Mission Control big board — and, since milestone 12, on the Sports Bar's
+screen over the counter, which shows the same feed — stay commissioner-only.
+(And if someone in the Sports Bar winks at you: yes, the rumors are true — see
+"The secret room chain" below.)
 
 ---
 
@@ -42,7 +43,7 @@ chain" below.)
 | Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,token}/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
-| ICE / TURN credentials (any player in Mission Control) | `app/api/neighborhood/ice/route.js` |
+| ICE / TURN credentials (any player in a room with a screen) | `app/api/neighborhood/ice/route.js` |
 | Moderation API (admin-only) | `app/api/neighborhood/admin/route.js` |
 | Moderation screen | `app/admin/neighborhood/page.jsx` + `components/NeighborhoodModeration.jsx` |
 
@@ -143,12 +144,22 @@ cap. Both return `'ok'`, `'rate_limited'` or `'not_joined'`.
 
 ### Realtime channels
 
-**Two private channels per room** (`lib/neighborhood/topics.js`):
+**Two private channels** (`lib/neighborhood/topics.js`) — a gameplay one per
+room, and ONE screen-share one shared by every room that has a screen:
 
 | topic | who writes | carries |
 | --- | --- | --- |
 | `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked` + presence |
-| `neighborhood-rtc:<roomId>` | any player in the room | the five `rtc-*` screen-share events |
+| `neighborhood-rtc:big-board` | any player watching a screen | the five `rtc-*` screen-share events + presence |
+
+The signaling topic was per-room until milestone 12. That quietly capped a
+broadcast at the room it started in: a viewer in the Sports Bar was subscribed
+to a different topic, so the broadcaster in Mission Control never heard its
+hello and never offered it anything. Both rooms with a screen now share one
+topic (`screenChannelFor()` in the room registry), so a single mesh spans both
+rooms — no second connection, no second announcement, no second grant. **Rooms
+with no screen open no signaling channel at all**, which is one fewer channel
+per player than before in five of the seven rooms.
 
 Both are opened with `private: true`, so Supabase runs the RLS policies in
 `supabase/neighborhood_realtime_auth.sql` on every subscribe and every
@@ -184,7 +195,11 @@ credential. Two modes, decided by the server:
 - **`scoped`** — `SUPABASE_JWT_SECRET` is set, so the route mints a one-hour
   HS256 token carrying an `nb_room` claim (`lib/neighborhood/realtimeAuth.js`)
   and the client hands it to `supabase.realtime.setAuth()`. The RLS policy
-  pins that browser to the one room it asked for. The transport re-mints on
+  pins that browser to the one room it asked for. A room with a screen also
+  gets an `nb_screen` claim naming the shared board channel — **re-run
+  `supabase/neighborhood_realtime_auth.sql` before turning the secret on**, or
+  a scoped browser cannot subscribe to the signaling topic and both screens
+  sit on AWAITING FEED. The transport re-mints on
   the heartbeat, ten minutes before expiry, so a long visit never drops.
 - **`shared`** — no signing secret configured. The browser presents the
   project anon key instead, which the read policy also accepts. It can read
@@ -218,6 +233,15 @@ and stale ones die with the page (and in five minutes regardless).
 say hello, and a forged "I stopped" is ignored unless it comes from the
 broadcaster that viewer actually verified.
 
+Sharing the channel across two rooms (milestone 12) moved none of this. The
+grant still names Mission Control, because "may this browser put a picture on
+the board" is one permission and not one per room, and the viewer still checks
+it against its own nonce before it looks at the SDP. What the channel decides
+is who can be *reached*; what the grant decides is who is *believed*. The
+broadcaster's own sanity check — refuse any id that is not present — now reads
+presence on the shared board channel (everyone watching, in either room)
+instead of one room's roster.
+
 ### Relay (TURN) — how the big board works on cellular
 
 STUN only tells each side what its own public address looks like; the two
@@ -234,7 +258,8 @@ the relay.
   browser back a short-lived username/password plus the relay URLs. The key
   itself never leaves the server.
 - **Who may ask.** The gameplay gate + same-origin, then a player id with an
-  **active, unbanned row standing in Mission Control**. Plus a sliding-window
+  **active, unbanned row standing in the room it asked for, and that room must
+  have a screen** (Mission Control or the Sports Bar). Plus a sliding-window
   rate limit (12 per player / 40 per IP per 5 min, per lambda). Farming it is
   pointless anyway: the server mints **one** credential set with a 4h TTL and
   serves the same cached copy to everyone, so a thousand calls cost Cloudflare
@@ -291,7 +316,7 @@ player: it only ever says yes or no about a grant the caller already holds.
 - `POST /api/neighborhood/broadcast/verify` — any player: is this grant real?
 - `GET/POST /api/neighborhood/ice` — GET: does this deployment have a relay?
   POST: ICE servers (Cloudflare TURN credentials when configured, STUN
-  otherwise) for one active player standing in Mission Control.
+  otherwise) for one active player standing in a room with a screen.
 - `GET/POST /api/neighborhood/admin` — moderation snapshot / actions `mute`,
   `kick` (default 10 min, max 24h), `unkick`, `delete_message`, `prune`.
 
@@ -368,16 +393,20 @@ points and falls back to spawn). Two optional keys power the secret chain
 (milestone 8): `interact[]` and `exits[].requiresFlag` — see the next
 section.
 
-One more optional key, **`fitHeight: true`**. By default the camera picks a
-zoom that fits the room's WIDTH and then scrolls vertically as you walk,
-clamped to the room. That works for rooms you explore on foot, but it cannot
-show scenery mounted *above* the floor: the camera follows your feet, so the
-highest it can ever pan is "top of the walkable polygon minus half a
-viewport". `fitHeight` tells the engine to zoom out until the whole room fits
-vertically (`roomZoom()` in `components/NeighborhoodRoom.jsx`). It only ever
-zooms out relative to the width rule, so nothing gets closer than before. Set
-it on any room whose art must be seen but cannot be walked to — Mission
-Control is the reason it exists.
+One more optional key, **`fitRoom: true`** (it was called `fitHeight` until
+milestone 12). By default the camera picks a zoom that fits the room's WIDTH
+and then scrolls vertically as you walk, clamped to the room. That works for
+rooms you explore on foot, but it cannot show scenery mounted *above* the
+floor: the camera follows your feet, so the highest it can ever pan is "top of
+the walkable polygon minus half a viewport". `fitRoom` tells the engine to zoom
+out until the WHOLE room fits the viewport — both axes, down to a floor of
+`MIN_FIT_ZOOM` (0.4) (`roomZoom()` in `components/NeighborhoodRoom.jsx`). It
+only ever zooms out relative to the width rule, so nothing gets closer than
+before. Set it on any room whose art must be seen but cannot be walked to —
+Mission Control is the reason it exists, and the Sports Bar screen is the
+reason it grew the width half: that screen is 608px wide in an 800px-wide
+room, so on a phone the `MIN_ZOOM` floor (there to keep avatars readable) was
+the thing that would have cropped it.
 
 ## The secret room chain (milestone 8)
 
@@ -395,10 +424,12 @@ The Sports Bar hides a three-room easter egg behind its restroom door:
    center. The screen's inner surface is the exported `MISSION_SCREEN` rect
    in `lib/neighborhood/rooms.js` — **exactly 16:9 (608 x 342 world px)**,
    sitting at y 36-378 while the floor starts at y 452. That gap is why the
-   room sets `fitHeight: true`: without it a wide desktop window cropped the
+   room sets `fitRoom: true`: without it a wide desktop window cropped the
    top of the board and the camera could not pan up to it (fixed in milestone
    10). The live feed is a DOM `<video>` re-pinned to that rect every frame,
-   so it rides the camera exactly like painted scenery.
+   so it rides the camera exactly like painted scenery. Since milestone 12 the
+   Sports Bar has a screen of its own — same size, same feed, same code — see
+   "The Sports Bar screen" below.
 
    **Watching is not sharing.** Two capability checks, deliberately
    separate: `screenViewSupported()` (just an `RTCPeerConnection`) decides
@@ -510,6 +541,94 @@ concurrency headroom is unchanged in practice. A full league night is
 comfortable. A link that escapes into the wild is not — if that happens, flip
 `NEIGHBORHOOD_PUBLIC` back to false and the world closes instantly.
 
+## The Sports Bar screen (milestone 12)
+
+Austin's ask: *"Let's change the sports bar and have a TV in there too. Same
+setup as mission control but over the bar, same size too. Get rid of the two
+smaller TVs too."* So the bar's two small animated TVs (the looping fake game
+with the score bug) are gone, and one big screen hangs over the counter,
+showing **the same live feed as the Mission Control big board**.
+
+### The room
+
+The Sports Bar was 800 x 880 with a 340px wall — nowhere near enough wall for
+a 608 x 342 screen. It is now **800 x 1030 with the wall line at y 560**, and
+the screen (`BAR_SCREEN`, exported from `lib/neighborhood/rooms.js`) sits at
+x 96-704, y 100-442: **exactly 16:9, exactly the size of `MISSION_SCREEN`**,
+because both are pinned by the same code. Width stayed at 800 on purpose —
+that is what keeps the whole screen inside a phone-width viewport at the
+`fitRoom` zoom floor.
+
+Everything else on that wall moved out from under it:
+
+- the **back bar** (bottles, mirror, cabinet) came off the wall and became a
+  floor prop standing behind the counter, which is where a real back bar is;
+- the **HSPN SPORTS neon** is now the marquee on the wainscot directly under
+  the screen — it reads as the screen's nameplate, the way MISSION CONTROL's
+  plate does;
+- the **framed jersey** and, below it, the **dartboard** are stage left of the
+  screen; the **restroom door** (still the way into the secret chain) is
+  stage right, taller now that the wall is;
+- the **pennant string** runs across the top above the screen; jukebox, pub
+  tables, stools and the exit mat just moved down with the floor.
+
+The gap between the back bar and the counter is walkable on purpose: that is
+the bartender's spot, and standing in it puts you behind the bar.
+
+Standby art matches the board's: HSPN, a blinking **AWAITING FEED** (or
+**INCOMING FEED** while a handshake is in flight), a tally light, plus a house
+bug along the bottom so an idle screen still looks like a sports bar. Tap for
+sound, tap again for theater, hold for OS fullscreen — same handlers, same
+`<video>`, because the room engine pins that one element to
+`screenRectFor(roomId)` and neither the pinning nor the gestures care which
+room they are in.
+
+### One broadcast, two rooms
+
+The interesting half. Signaling used to ride `neighborhood-rtc:<roomId>`, so a
+broadcaster in Mission Control and a viewer in the Sports Bar were on
+different topics and could never have found each other. Three ways to fix
+that: give the broadcaster a second connection into the bar's channel; teach
+it to publish on both room topics; or **give every room with a screen one
+shared signaling channel**. The third is what shipped, because it is the only
+one where nothing has to know how many rooms there are:
+
+- `lib/neighborhood/rooms.js` gained a `SCREENS` registry — room id → screen
+  rect — plus `SCREEN_CHANNEL` (`"big-board"`), `screenRectFor()`,
+  `roomHasScreen()` and `screenChannelFor()`. That is the entire config
+  surface. Adding a third screen room is one entry in `SCREENS` and a rect on
+  the wall; no transport, engine or API code changes.
+- `lib/neighborhood/realtime.js` subscribes to `rtcTopic(screenChannelFor(room))`
+  instead of `rtcTopic(room)`, and opens no signaling channel at all for a
+  room with no screen.
+- The broadcaster stays a single mesh with one `RTCPeerConnection` per viewer;
+  it just now hears hellos from both rooms. One announcement, one grant per
+  viewer nonce, one capture.
+- Presence moved with it. The broadcaster's "I only answer people who are
+  actually here" check reads presence on the board channel — everyone watching
+  in either room — instead of one room's roster.
+- `/api/neighborhood/ice` now hands relay credentials to a player standing in
+  **any** room with a screen (still: active row, unbanned, in the room it
+  claims, rate limited). A bar viewer on cellular needs TURN exactly as much
+  as a Mission Control viewer does.
+
+**Nothing about trust moved.** Starting a broadcast is still admin-cookie-only
+and still happens in Mission Control (that is where the Share My Screen button
+renders, and `BROADCAST_ROOM_ID` is what the grant names). Viewers still refuse
+any offer whose grant is not signed by the server and bound to the nonce they
+invented for their own page load. Gameplay events are still unforgeable
+because clients still cannot publish on the gameplay topic. The shared channel
+widens *who a broadcast can reach*, never *who is believed* — which is the
+same reason it was safe for the signaling topic to be client-writable in the
+first place.
+
+One consequence worth knowing: because the channel is shared, a viewer in the
+bar and a viewer in Mission Control are indistinguishable to the mesh. That is
+the point, but it also means "the broadcaster's avatar left the room" — the
+shortcut that drops the feed instantly for Mission Control viewers — cannot
+fire for bar viewers. They fall back to the ordinary path: `rtc-live false`
+when Austin stops, which is what ends a broadcast anyway.
+
 ## Known limitations
 
 - **Peers see walks start ~150–300ms late** (serverless HTTP broadcast, no
@@ -528,6 +647,14 @@ comfortable. A link that escapes into the wild is not — if that happens, flip
   text) and is English-only.
 - **One shard per room.** A room at capacity bounces you; there are no
   parallel instances.
+- **A broadcast starts in Mission Control only.** Both screens show it, but
+  the Share My Screen button lives in the bunker; Austin walks in there to go
+  on air. Deliberate — one room owns the permission.
+- **On a phone narrower than ~360 CSS px, Mission Control still crops.** With
+  `fitRoom` fitting both axes, the Sports Bar screen is fully visible at every
+  viewport tested (down to 320px wide) and the Mission Control board at 375px
+  and up; below that, MC's 960px-wide room hits the 0.4 zoom floor and the
+  camera pans. Walk to the middle of the room and the board is whole.
 - **In `shared` channel mode, a determined reader can listen to a room they
   are not standing in** using the anon key from the bundle. They see positions
   and chat — the same things they would see by walking in, minus being seen.

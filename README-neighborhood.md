@@ -3,9 +3,9 @@
 A Club Penguin-style browser world for the league, living at `/neighborhood`
 on the HSPN site (longbardi-league.vercel.app, a.k.a. hspn.vercel.app). Make a
 character, walk the Town Square, step through doors into the Grocery Store, the
-Fast Food Place and the Sports Bar, and chat with whoever's around — realtime
-multiplayer, original procedural art (every pixel drawn in canvas code, no
-image assets), phone-friendly.
+Fast Food Place and the Sports Bar, chat with whoever's around, and throw
+tomatoes at any of it — realtime multiplayer, original procedural art (every
+pixel drawn in canvas code, no image assets), phone-friendly.
 
 Built across milestones 1–10; this file is the operator's manual. **It is live
 for the whole league** — `NEIGHBORHOOD_PUBLIC` is true, there is a
@@ -32,6 +32,7 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | Room registry — **one config object per room** | `lib/neighborhood/rooms.js` |
 | Pathfinding (nav grid, A*, smoothing) | `lib/neighborhood/pathing.js` |
 | Shared constant-speed walk math | `lib/neighborhood/movement.js` |
+| Tomato flight, splat timing + splat art | `lib/neighborhood/tomatoes.js` |
 | Chat text rules (sanitize, cap, filter) | `lib/neighborhood/chat.js` |
 | Server helpers + Realtime broadcast | `lib/neighborhood/multiplayerServer.js` |
 | Client realtime transport | `lib/neighborhood/realtime.js` |
@@ -40,15 +41,17 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | Broadcaster grants (sign/verify) | `lib/neighborhood/broadcastGrant.js` |
 | TURN relay credentials (server) | `lib/neighborhood/turnCredentials.js` |
 | Channel RLS policies (run once) | `supabase/neighborhood_realtime_auth.sql` |
-| Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,token}/route.js` |
+| Tomato rate limit + column (run once) | `supabase/neighborhood_tomatoes.sql` |
+| Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,throw,token}/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
 | ICE / TURN credentials (any player in a room with a screen) | `app/api/neighborhood/ice/route.js` |
 | Moderation API (admin-only) | `app/api/neighborhood/admin/route.js` |
 | Moderation screen | `app/admin/neighborhood/page.jsx` + `components/NeighborhoodModeration.jsx` |
 
-Design rule that makes the whole thing hold together: **pathing, movement and
-chat rules are pure modules imported by both the client and the API routes**,
+Design rule that makes the whole thing hold together: **pathing, movement,
+chat and tomato rules are pure modules imported by both the client and the API
+routes**,
 so the server validates with the exact math the client renders with, and every
 client computes identical positions from `(x, y, path, path_started_at)`.
 
@@ -117,6 +120,7 @@ stale). Doubles as the ban record after a kick.
 | `path_started_at` | timestamptz | when the walk started; with `x/y/path` this fully determines the current position |
 | `move_times` | jsonb | recent move timestamps (rate-limit window) |
 | `chat_times` | jsonb | recent chat timestamps (rate-limit window) |
+| `throw_times` | jsonb | recent tomato timestamps (rate-limit window) |
 | `last_seen` | timestamptz | heartbeat every 30s; younger than 75s = active |
 | `muted` | boolean | chat blocked server-side when true |
 | `kicked_until` | timestamptz | live timed ban; the row survives prune/leave while this is in the future |
@@ -131,16 +135,22 @@ insert; deletes happen only through the moderation API.
 
 ### SQL functions (Database → Functions in the Supabase dashboard)
 
-Both are `plpgsql`, `SECURITY DEFINER`, `SET search_path TO 'public'`, and
+All three are `plpgsql`, `SECURITY DEFINER`, `SET search_path TO 'public'`, and
 implement atomic sliding-window rate limits by locking the player row
 (`select ... for update`) so parallel serverless lambdas can't race past the
-cap. Both return `'ok'`, `'rate_limited'` or `'not_joined'`.
+cap. All return `'ok'`, `'rate_limited'` or `'not_joined'`.
 
-- `neighborhood_record_move(p_id text, p_now_ms numeric)` — keeps timestamps
+- `neighborhood_record_move(p_id text, p_now_ms bigint)` — keeps timestamps
   in `move_times` newer than `p_now_ms - 1000`; refuses when 3+ remain
   (~3 moves/sec).
-- `neighborhood_record_chat(p_id text, p_now_ms numeric)` — same shape on
+- `neighborhood_record_chat(p_id text, p_now_ms bigint)` — same shape on
   `chat_times` with a 2000ms window and a cap of 1 (~1 message / 2s).
+- `neighborhood_record_throw(p_id text, p_now_ms bigint)` — same shape on
+  `throw_times` with a 1500ms window and a cap of 1 (~1 tomato / 1.5s).
+  Source: `supabase/neighborhood_tomatoes.sql`. Unlike the other two, its
+  PUBLIC execute grant is revoked — it is `SECURITY DEFINER`, so leaving the
+  default in place would let anyone holding the anon key stamp `throw_times`
+  on a player id they know. Worth doing to the older two as well.
 
 ### Realtime channels
 
@@ -149,7 +159,7 @@ room, and ONE screen-share one shared by every room that has a screen:
 
 | topic | who writes | carries |
 | --- | --- | --- |
-| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked` + presence |
+| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw` + presence |
 | `neighborhood-rtc:big-board` | any player watching a screen | the five `rtc-*` screen-share events + presence |
 
 The signaling topic was per-room until milestone 12. That quietly capped a
@@ -181,6 +191,7 @@ Events on the wire:
 | `move` | wire player (`id, username, avatar, x, y, path, startedAt`) | server-validated walk started |
 | `leave` | `{ id }` | player left / hopped rooms — drop the avatar |
 | `chat` | `{ id, playerId, username, text, at }` | stored message echo |
+| `throw` | `{ id, playerId, username, kind, targetId, ox, oy, tx, ty, sx, sy, at, flightMs }` | server-validated tomato; every client replays the same arc |
 | `chat_delete` | `{ id, playerId }` | commissioner deleted a message |
 | `kicked` | `{ id, until, message }` | the named player was removed; their client shows the removed screen, everyone else treats it as a leave |
 
@@ -312,6 +323,10 @@ player: it only ever says yes or no about a grant the caller already holds.
   ban-record rows so a kicked client can't erase its own timeout).
 - `GET/POST /api/neighborhood/chat` — history backfill / validated, muted-
   checked, rate-limited send.
+- `POST /api/neighborhood/throw` — throw a tomato. Client sends a TARGET only;
+  the server computes the origin, the flight time and the landing point and
+  broadcasts one record. Rate-limited in Postgres. **Not** muted-checked — see
+  "Tomatoes" below.
 - `POST /api/neighborhood/token` — mint the Realtime credential for one room
   (see "Channel authorization"); refuses banned players.
 - `GET/POST /api/neighborhood/broadcast` — **admin only.** GET: may this
@@ -636,8 +651,129 @@ shortcut that drops the feed instantly for Mission Control viewers — cannot
 fire for bar viewers. They fall back to the ordinary path: `rtc-live false`
 when Austin stops, which is what ends a broadcast anyway.
 
+## Tomatoes (milestone 13)
+
+Austin's ask: *"add the ability to throw tomatoes at other players and the
+room. When a tomato hits it should splatter and fade away after a few seconds.
+And it needs to be able to hit the TV too"*
+
+Every player, every room, both themes. Tap **Tomato** in the header to arm a
+throw; the next tap is the target. It lobs on an arc, splats, sticks for about
+three seconds, then fades over another 1.4. **Mute does not stop it** — a
+tomato is not speech (see "Moderation" below).
+
+### Three things you can hit
+
+| kind | target on the wire | where the splat lives |
+| --- | --- | --- |
+| `spot` | a world point, clamped to the room | painted in the world pass, depth-sorted on its y — a splat on the floor is in front of you, one up on a wall is behind everybody |
+| `player` | a `targetId` | sticks to that avatar and walks around with them, scattered a little so three hits don't stack into one blob |
+| `screen` | `sx`, `sy` in 0..1 of the room's screen rect | an overlay canvas pinned over the `<video>` — so it lands ON a live broadcast |
+
+The screen case is the one worth explaining. The big board and the Sports Bar
+TV are a DOM `<video>` re-pinned to `screenRectFor(roomId)` every frame, which
+means anything painted on the world canvas is painted BEHIND the picture. So
+there is now a second element in the same wrapper — a `<canvas>` pinned to the
+identical rect, one z-layer above the video, `pointer-events: none`. Splats on
+glass are drawn there, in screen-rect space, and fade there. It follows the
+camera on the wall and follows the letterbox in theater mode (it matches the
+`object-contain` rect, so a splat stays on the same pixel of picture when you
+blow the feed up). It repaints only while something is on the glass, so an
+idle screen costs nothing per frame.
+
+Because that overlay is always mounted in a room with a screen, its bounding
+box is also the honest answer to "where on the picture did that tap land?" —
+which is how an armed tap on a live feed becomes an `sx`/`sy` in both framings.
+
+### Why it looks the same in every browser
+
+The same trick the walking uses. The client sends a **target**, never a
+trajectory. The route computes where the thrower is standing (from the stored
+path + timestamp — the deterministic walk math), how long the flight takes and
+where it lands, then broadcasts ONE record: `(origin, target, at, flightMs)`.
+Every client replays an identical arc from it, and nobody negotiates anything.
+
+Splat **art** is deterministic too, and costs nothing on the wire: the blob's
+lobes, its flecks and its seeds are generated by a small seeded PRNG
+(mulberry32) keyed on a hash of the throw id, so two browsers hashing the same
+id draw the same splatter without a byte of geometry crossing the network.
+`lib/neighborhood/tomatoes.js` holds all of it — flight, timing, art — and is
+imported by the engine and the route alike, which is the house rule for
+anything both sides must agree on.
+
+Player-seeking throws re-aim at the victim's live position every frame rather
+than at a fixed point. That is still deterministic — every client computes that
+position from the same broadcast path and timestamp — and it means a tomato
+lands on someone who kept walking. The server's own aim leads the target by one
+flight time for the same reason.
+
+Your own throw draws instantly and the server's echo of it is dropped, exactly
+like your own walk. So the thrower sees the arc with zero latency while peers
+see it ~150–300ms later, and a player-targeted arc can differ by a few pixels
+between your screen and theirs. Nobody has ever noticed a walk doing this.
+
+### What stops a tomato cannon
+
+- **Clients cannot publish a `throw` at all.** It rides the gameplay topic,
+  which is server-write-only (milestone 10). A forged tomato is exactly as
+  impossible as a forged chat message.
+- **One throw per 1.5s per player**, enforced by `neighborhood_record_throw` in
+  Postgres — atomic and row-locked, so parallel lambdas can't race it. The
+  client paces itself to the same number so the 429 is rare; when it does fire
+  the toast says "One tomato at a time — let that one land."
+- If that SQL function is ever missing (a fresh database that hasn't run
+  `supabase/neighborhood_tomatoes.sql`), the route falls back to a per-lambda
+  in-memory window instead of 500ing. Weaker — a cold start forgets it — but it
+  still stops hold-the-button spam, and the Postgres one takes over the moment
+  it exists.
+- Targets are validated: a `spot` is clamped into the room, a `screen` needs
+  the room to actually have one and normalized coords in 0..1, a `player` must
+  be an active, unbanned row **in the same room**.
+- A kicked player can't throw, same as everything else.
+
+### Moderation — and the toggle that isn't there yet
+
+**Mute deliberately does not block throwing.** Mute is the chat sanction; a
+tomato is a gesture, not speech, and the request was explicit about it. Nothing
+is written to `neighborhood_messages` either: throws are ephemeral, so unlike
+chat they leave **no moderation trail** — a tomato that landed five seconds ago
+is gone and unauditable.
+
+That is the right default for a friendly league, and it is also the gap. If
+somebody ever turns the Town Square into a barrage, today's only answer is
+**Kick 10m**, which is a heavier hammer than the offence. A per-player
+**"no tomatoes"** flag would be the proportionate one: a `no_tomatoes` boolean
+on `neighborhood_players`, checked in the throw route the way `muted` is
+checked in the chat route, with a button next to Mute on `/admin/neighborhood`.
+That is roughly a twenty-line change and it is worth adding the first time
+anyone needs it — but not before, because a mod control nobody has needed is a
+control nobody has tested. A room-wide "tomatoes off" switch is the same idea
+one level up and probably the better one if a whole room ever gets out of hand.
+
+### The UI call
+
+An **armed state that consumes the next tap**, rather than a drag-to-aim or a
+long-press. Reasons: it is one gesture on desktop and phone alike, the armed
+state is visible (the button flips to **Cancel Aim**, the cursor goes
+crosshair, a banner says what is about to happen), and it cannot be entered by
+accident. Cancel is deliberately over-provided — the button, Escape, or just
+throwing. Every control is 44px+ tall.
+
+**Click-to-walk is untouched when nothing is armed.** The armed branch returns
+before the interact/door/pathfinding code ever runs, so an armed tap can't open
+a keypad or step through a door either — one tap, one tomato, straight back to
+normal.
+
 ## Known limitations
 
+- **A tomato leaves no trail.** Chat has `neighborhood_messages` behind it;
+  throws have nothing. Good for the database, but it means "who splatted me?"
+  is only answerable by whoever was looking. See "Moderation" above for the
+  `no_tomatoes` toggle that isn't built yet.
+- **Splats are per-client and per-visit.** They live in engine state, not in
+  Postgres, so a reload wipes the ones already on the wall and a player who
+  walks in three seconds after a throw never sees it. Deliberate: a splat is a
+  4.6-second event, not world state. Walking to another room clears yours too.
 - **Peers see walks start ~150–300ms late** (serverless HTTP broadcast, no
   socket server). Your own avatar always moves instantly; the deterministic
   path math means everyone still ends up in exactly the same place.

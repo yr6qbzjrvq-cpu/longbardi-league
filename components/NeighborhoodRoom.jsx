@@ -532,7 +532,6 @@ export default function NeighborhoodRoom({
   const canvasRef = useRef(null);
   const themeRef = useRef("light");
   const [toast, setToast] = useState(null);
-  const [hint, setHint] = useState(true);
   const [count, setCount] = useState(1);
   const [roomName, setRoomName] = useState("Town Square");
   const [log, setLog] = useState([]); // chat log entries (backfill + live)
@@ -777,6 +776,28 @@ export default function NeighborhoodRoom({
       },
     });
     screenRef.current = sc;
+    // "May I broadcast?" was asked exactly once, on mount, in
+    // the Town Square. One hiccup on that fetch — a cold start,
+    // a dropped request — and the answer was a permanent no:
+    // there was no retry, so the Share My Screen button stayed
+    // hidden for the whole session no matter how many times
+    // Austin walked into the bunker. Walking into the broadcast
+    // room asks again. The server is still the only authority
+    // and still 404s everyone without the commissioner cookie,
+    // so this widens nothing; it just stops one lost packet
+    // from costing a broadcast.
+    if (
+      targetRoomId === BROADCAST_ROOM_ID &&
+      !canBroadcastRef.current &&
+      screenShareSupported()
+    ) {
+      checkBroadcastAuth().then((ok) => {
+        if (!ok || screenRef.current !== sc) return;
+        canBroadcastRef.current = true;
+        setCanBroadcast(true);
+        ensureBroadcaster();
+      });
+    }
     ensureBroadcaster();
     // Someone may already be broadcasting — say hello and find
     // out, rather than waiting for the next announcement.
@@ -1179,6 +1200,16 @@ export default function NeighborhoodRoom({
       }
       const old = s.conn;
       s.room = target;
+      // Name the room the moment the world becomes it. These
+      // used to be the LAST two lines of the try block, after
+      // the channel rewiring and the peer replay — so anything
+      // that threw in between left the canvas showing the new
+      // room while `roomId` still said the old one, and the
+      // Share My Screen button (gated on roomId) never
+      // appeared in Mission Control. The room you are standing
+      // in is decided here, not by how the rest of the hop goes.
+      setRoomName(target.name);
+      setRoomId(target.id);
       s.grid = getNavGrid(target);
       s.bg = null;
       s.bgKey = "";
@@ -1204,8 +1235,6 @@ export default function NeighborhoodRoom({
       // the old channel goes away, but our row already moved —
       // detach (no /leave, which would delete the new row)
       if (old) old.detach();
-      setRoomName(target.name);
-      setRoomId(target.id);
       setLog([]); // the log follows the room
       fetchChatHistory(target.id).then((history) => {
         if (s.destroyed || s.conn !== conn) return;
@@ -1606,7 +1635,6 @@ export default function NeighborhoodRoom({
         wy <= a.hotspot.y + a.hotspot.h
     );
     if (act) {
-      setHint(false);
       if (act.type === "keypad") {
         setKeypad(act);
       } else {
@@ -1635,7 +1663,6 @@ export default function NeighborhoodRoom({
     if (!exit && Math.hypot(spot.x - want.x, spot.y - want.y) > 240) return;
 
     const path = findPath(s.room, s.grid, s.pos.x, s.pos.y, spot.x, spot.y);
-    setHint(false);
     s.pendingExit = exit || null;
     if (path.length === 0) {
       // already standing at the door — step straight through
@@ -1849,13 +1876,17 @@ export default function NeighborhoodRoom({
             ))}
           </div>
         )}
-        {(toast || hint) && (
+        {/* Status bar. Toasts ONLY — the room-is-full / door-is-
+            stuck / lost-the-feed messages that a player has to
+            read. The ambient "tap the ground to walk around"
+            coaching that used to live here is gone. */}
+        {toast && (
           <div
             aria-live="polite"
             className="pointer-events-none absolute inset-x-0 bottom-[4.25rem] flex justify-center px-4"
           >
             <p className="rounded-full bg-black/70 px-4 py-2 text-center text-sm font-medium text-white">
-              {toast ? toast.text : "Tap the ground to walk around"}
+              {toast.text}
             </p>
           </div>
         )}
@@ -1891,11 +1922,6 @@ export default function NeighborhoodRoom({
           />
         )}
       </div>
-      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        Tap a doorway to head inside — or back out to the square. League
-        friends in the room walk around and chat live; open the log to catch
-        up.
-      </p>
     </div>
   );
 }

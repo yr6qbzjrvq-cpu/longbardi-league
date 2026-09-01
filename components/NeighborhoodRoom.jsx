@@ -116,22 +116,22 @@ function camAxis(center, view, world) {
 // top of the board sat above the camera's reach and was simply
 // unreachable.
 //
-// So a room can ask to never be cropped with `fitRoom: true`,
-// and we shrink until the WHOLE room fits the viewport — both
-// axes, down to MIN_FIT_ZOOM. Height was the only axis that
-// mattered when Mission Control was the only such room
-// (milestone 10 called the key `fitHeight`); the Sports Bar
-// screen is the same 608px wide in an 800px room, so on a
-// phone the WIDTH clamp is what would crop it — MIN_ZOOM
-// exists to keep avatars readable and would have pinned the
-// zoom too far in. Fitting both axes is the honest version of
-// the same rule: a room that says fitRoom is a room whose art
-// must be seen, and seeing it beats big avatars.
+// So the zoom now fits the WHOLE room — both axes — in every
+// room, and no room is ever drawn closer than that fit. This
+// is what milestone 10 gave Mission Control (as fitHeight) and
+// milestone 12 gave the Sports Bar: those two framed better on
+// desktop than every other room, which is exactly the "too
+// zoomed in" everywhere else — Town Square's storefronts sit
+// above its floor and a wide, short window could never pan up
+// to them. `fitRoom` now only picks the floor: rooms that must
+// show a wall screen shrink to MIN_FIT_ZOOM, the rest stop at
+// MIN_ZOOM. On a phone width is the binding axis either way,
+// so phone framing is unchanged and only desktop pulls back.
 export function roomZoom(room, viewW, viewH) {
   const byWidth = Math.min(Math.max(viewW / room.width, MIN_ZOOM), MAX_ZOOM);
-  if (!room.fitRoom || !(viewH > 0)) return byWidth;
+  if (!(viewH > 0)) return byWidth;
   const fit = Math.min(viewW / room.width, viewH / room.height);
-  return Math.max(Math.min(byWidth, fit), MIN_FIT_ZOOM);
+  return Math.max(Math.min(byWidth, fit), room.fitRoom ? MIN_FIT_ZOOM : MIN_ZOOM);
 }
 
 function roundRectPath(ctx, x, y, w, h, r) {

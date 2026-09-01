@@ -36,6 +36,17 @@
 //     plus exits gated by the per-visit flags they set; the
 //     flags live in client state only, so every player
 //     discovers the chain for themselves
+//   • tomatoes (milestone 13): arm the Tomato button and the
+//     next tap is a THROW — at a player, at any spot in the
+//     room, or at a big screen. The client only ever sends a
+//     target to /api/neighborhood/throw; the server decides
+//     the origin, the flight time and the landing point and
+//     broadcasts one record, so every browser replays the
+//     identical arc (the walking pattern, applied to
+//     projectiles). Splats stick for a few seconds and fade.
+//     Screen splats are painted on an overlay canvas pinned to
+//     the same rect as the <video>, so they land ON a live
+//     feed instead of behind it
 //   • big board (milestone 9, two rooms since 12): in any room
 //     that has a screen — Mission Control's big board and the
 //     Sports Bar's screen over the counter — a DOM <video> is
@@ -62,6 +73,27 @@ import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathin
 import { advanceAlongPath } from "@/lib/neighborhood/movement";
 import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
 import { CHAT_MAX, validateChatText, bubbleDurationMs } from "@/lib/neighborhood/chat";
+import {
+  THROW_COOLDOWN_MS,
+  HAND_LIFT,
+  BODY_LIFT,
+  SPLAT_LIFE_MS,
+  SPLAT_RADIUS,
+  SCREEN_SPLAT_RADIUS,
+  TOMATO_RADIUS,
+  MAX_SPLATS,
+  arcPointAt,
+  arcHeightFor,
+  flightDurationMs,
+  splatAlpha,
+  splatScale,
+  seedFromId,
+  rngFrom,
+  makeSplatArt,
+  drawSplat,
+  drawTomato,
+  drawTomatoShadow,
+} from "@/lib/neighborhood/tomatoes";
 import {
   createBroadcaster,
   createViewer,
@@ -301,6 +333,42 @@ function relTime(at) {
   return `${Math.round(hrs / 24)}d ago`;
 }
 
+// ---- tomatoes (milestone 13) -----------------------------
+
+// Roughly the box an avatar occupies, in world units, for
+// "did that tap hit a player?". Generous on purpose: a thumb
+// on a phone is not a sniper scope.
+function avatarHitBox(avatar, x, y) {
+  const size = (avatar && avatar.body && avatar.body.size) || "medium";
+  const h = 150 * (SIZE_FACTOR[size] || 1) * AVATAR_SCALE;
+  const halfW = 48 * AVATAR_SCALE;
+  return { left: x - halfW, right: x + halfW, top: y - h - 8, bottom: y + 14 };
+}
+
+// Frontmost player under a world point, or null. Peers only —
+// tapping your own avatar means "splat the ground I'm on".
+function playerHitAt(s, wx, wy) {
+  let best = null;
+  for (const peer of s.peers.values()) {
+    const b = avatarHitBox(peer.avatar, peer.curX, peer.curY);
+    if (wx < b.left || wx > b.right || wy < b.top || wy > b.bottom) continue;
+    if (!best || peer.curY > best.curY) best = peer;
+  }
+  return best;
+}
+
+// Where a tomato is actually headed THIS frame. Player-seeking
+// throws re-aim at the victim's live position every frame —
+// which is still deterministic, because every client computes
+// that position from the same broadcast path + timestamp.
+function throwEndpoint(s, t) {
+  if (t.kind !== "player") return { x: t.tx, y: t.ty };
+  if (t.targetId === s.selfId) return { x: s.pos.x, y: s.pos.y - BODY_LIFT };
+  const peer = s.peers.get(t.targetId);
+  if (peer) return { x: peer.curX, y: peer.curY - BODY_LIFT };
+  return { x: t.tx, y: t.ty - BODY_LIFT };
+}
+
 function drawScene(ctx, canvas, s, theme, t) {
   const { room } = s;
   const P = room.palette[theme];
@@ -346,13 +414,28 @@ function drawScene(ctx, canvas, s, theme, t) {
   for (const p of room.props) ents.push({ y: p.sortY ?? p.y, prop: p });
   for (const peer of s.peers.values()) ents.push({ y: peer.curY, peer });
   ents.push({ y: s.pos.y, player: true });
+  // Splats on the floor / a wall / a prop sort by where they
+  // landed, exactly like scenery does: a splat low on the
+  // screen is in front, one up on a wall is behind everybody.
+  // (Splats on a SCREEN are not here — they ride the overlay
+  // canvas over the <video>.)
+  for (const sp of s.splats) if (sp.kind === "spot") ents.push({ y: sp.y, splat: sp });
   ents.sort((a, b) => a.y - b.y);
+  const wallNowDraw = Date.now();
+  const drawStuck = (id, x, y) => {
+    for (const sp of s.splats) {
+      if (sp.kind !== "player" || sp.targetId !== id) continue;
+      const age = wallNowDraw - sp.at;
+      drawSplat(ctx, sp.art, x + sp.dx, y - BODY_LIFT + sp.dy, splatAlpha(age), splatScale(age));
+    }
+  };
   for (const e of ents) {
     if (e.player) {
       drawAvatar(ctx, s.avatar, s.pos.x, s.pos.y, AVATAR_SCALE, {
         walking: s.walking,
         frame: s.walkT,
       });
+      drawStuck(s.selfId, s.pos.x, s.pos.y);
       drawNameTag(ctx, s.name, s.pos.x, tagYFor(s.avatar, s.pos.y), true);
     } else if (e.peer) {
       const pr = e.peer;
@@ -360,10 +443,32 @@ function drawScene(ctx, canvas, s, theme, t) {
         walking: pr.walking,
         frame: pr.walkT,
       });
+      drawStuck(pr.id, pr.curX, pr.curY);
       drawNameTag(ctx, pr.username, pr.curX, tagYFor(pr.avatar, pr.curY), false);
+    } else if (e.splat) {
+      const age = wallNowDraw - e.splat.at;
+      drawSplat(ctx, e.splat.art, e.splat.x, e.splat.y, splatAlpha(age), splatScale(age));
     } else {
       e.prop.draw(ctx, e.prop, P, theme, t, fx);
     }
+  }
+
+  // Tomatoes in the air draw over everything in the world —
+  // they are, after all, in the air.
+  for (const tm of s.tomatoes) {
+    const u = Math.max(0, Math.min(1, (wallNowDraw - tm.at) / tm.flightMs));
+    const end = throwEndpoint(s, tm);
+    const oy = tm.oy - HAND_LIFT;
+    const arcH = arcHeightFor(tm.ox, oy, end.x, end.y);
+    const pt = arcPointAt(tm.ox, oy, end.x, end.y, u, arcH);
+    drawTomatoShadow(
+      ctx,
+      tm.ox + (end.x - tm.ox) * u,
+      tm.oy + (end.y + HAND_LIFT - tm.oy) * u,
+      u,
+      TOMATO_RADIUS
+    );
+    drawTomato(ctx, pt.x, pt.y, TOMATO_RADIUS, pt.rot);
   }
 
   // Chat draws over everything, in screen space.
@@ -539,6 +644,14 @@ export default function NeighborhoodRoom({
   const [chatDraft, setChatDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [keypad, setKeypad] = useState(null); // open keypad interact config (milestone 8)
+  // ---- tomatoes (milestone 13) ----
+  // Armed = the NEXT tap is a throw instead of a walk. One
+  // obvious state, one obvious cancel; nothing about
+  // click-to-walk changes while it is off.
+  const [armed, setArmed] = useState(false);
+  const armedRef = useRef(false);
+  armedRef.current = armed;
+  const screenFxRef = useRef(null); // splat overlay, pinned over the <video>
   // ---- big board (milestone 9) ----
   const [roomId, setRoomId] = useState("town-square");
   const [feed, setFeed] = useState("standby"); // standby | connecting | live
@@ -597,6 +710,13 @@ export default function NeighborhoodRoom({
       moveTarget: null,
       moveTimer: null,
       lastMoveAt: 0,
+      // tomatoes (milestone 13): in-flight arcs and the splats
+      // they leave. Both are ephemeral client state replayed
+      // from broadcast records — nothing is stored server-side.
+      tomatoes: [],
+      splats: [],
+      lastThrowAt: 0,
+      fxPainted: false,
       // chat
       selfId: player?.playerId || "self",
       bubbles: new Map(), // playerId → [{ id, text, at, until }]
@@ -863,9 +983,34 @@ export default function NeighborhoodRoom({
     if (target.requestFullscreen) target.requestFullscreen().catch(() => {});
   }
 
+  // Where on the screen's picture did that pointer land, as
+  // 0..1 of the screen rect? Measured off the splat overlay,
+  // which is pinned to the picture in both wall and theater
+  // framing — so this is right in either.
+  function screenUnitFromEvent(e) {
+    const fx = screenFxRef.current;
+    const el = fx && fx.style.display !== "none" ? fx : videoBoxRef.current;
+    if (!el) return null;
+    const b = el.getBoundingClientRect();
+    if (!(b.width > 0) || !(b.height > 0)) return null;
+    return {
+      sx: Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)),
+      sy: Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)),
+    };
+  }
+
   // Tap = sound, then theater. Hold = OS fullscreen.
   function feedPointerDown(e) {
     e.stopPropagation();
+    // Armed? Then a tap on the live picture is a tomato at the
+    // screen, not a sound/theater toggle.
+    if (armedRef.current) {
+      e.preventDefault();
+      setArmed(false);
+      const u = screenUnitFromEvent(e);
+      if (u) sendThrow({ kind: "screen", sx: u.sx, sy: u.sy });
+      return;
+    }
     if (longPressRef.current) clearTimeout(longPressRef.current);
     longPressRef.current = setTimeout(() => {
       longPressRef.current = null;
@@ -1023,6 +1168,13 @@ export default function NeighborhoodRoom({
         if (!live() || !payload || !payload.id) return;
         if (payload.playerId) dropBubble(payload.playerId, payload.id);
         setLog((prev) => prev.filter((e) => e.id !== payload.id));
+      },
+      // Someone threw a tomato (milestone 13). Only the throw
+      // route can publish this, and it carries everything a
+      // client needs to replay the identical arc.
+      onThrow: (ev) => {
+        if (!live()) return;
+        addThrow(ev, false);
       },
       // Screen-share handshake (milestone 9) — hand every
       // rtc-* event to both peer roles; each ignores what
@@ -1215,6 +1367,10 @@ export default function NeighborhoodRoom({
       s.bgKey = "";
       s.peers.clear();
       s.bubbles.clear();
+      // Tomatoes belong to the room they were thrown in.
+      s.tomatoes = [];
+      s.splats = [];
+      s.lastThrowAt = 0;
       s.walk = null;
       s.walking = false;
       s.walkT = 0;
@@ -1305,6 +1461,193 @@ export default function NeighborhoodRoom({
       setToast({ text: act.successToast, id: performance.now() });
     }
   }
+
+  // ---- tomatoes (milestone 13) -----------------------------
+
+  // One broadcast record (ours or a peer's) becomes one flight.
+  // `mine` throws carry a LOCAL timestamp; peers' carry the
+  // server's, which we shift onto our clock with the same
+  // offset the walk sim uses.
+  function addThrow(ev, mine) {
+    const s = sRef.current;
+    if (!ev || !ev.id) return;
+    if (s.tomatoes.some((t) => t.id === ev.id)) return;
+    const at = Number(ev.at);
+    s.tomatoes.push({
+      id: ev.id,
+      playerId: ev.playerId,
+      kind: ev.kind,
+      targetId: ev.targetId || null,
+      ox: Number(ev.ox) || 0,
+      oy: Number(ev.oy) || 0,
+      tx: Number(ev.tx) || 0,
+      ty: Number(ev.ty) || 0,
+      sx: ev.sx == null ? null : Number(ev.sx),
+      sy: ev.sy == null ? null : Number(ev.sy),
+      at: (Number.isFinite(at) ? at : Date.now()) - (mine ? 0 : s.clockOffset),
+      flightMs: Number(ev.flightMs) || 600,
+    });
+  }
+
+  // The server said no after we already drew the throw.
+  function dropThrow(id) {
+    const s = sRef.current;
+    s.tomatoes = s.tomatoes.filter((t) => t.id !== id);
+    s.splats = s.splats.filter((sp) => sp.id !== id);
+  }
+
+  // Impact. Splat art is generated from a hash of the throw id,
+  // so every browser draws the same splatter without a byte of
+  // geometry crossing the wire.
+  function landSplat(t) {
+    const s = sRef.current;
+    const seed = seedFromId(t.id);
+    const rnd = rngFrom(seed);
+    const base = { id: t.id, kind: t.kind, at: Date.now() };
+    if (t.kind === "screen") {
+      s.splats.push({
+        ...base,
+        sx: t.sx == null ? 0.5 : t.sx,
+        sy: t.sy == null ? 0.5 : t.sy,
+        art: makeSplatArt(seed, SCREEN_SPLAT_RADIUS),
+      });
+    } else if (t.kind === "player") {
+      // A little scatter across the body so three hits on the
+      // same victim don't stack into one blob.
+      s.splats.push({
+        ...base,
+        targetId: t.targetId,
+        dx: (rnd() - 0.5) * 44,
+        dy: (rnd() - 0.5) * 46,
+        art: makeSplatArt(seed, SPLAT_RADIUS * 0.78),
+      });
+    } else {
+      s.splats.push({ ...base, x: t.tx, y: t.ty, art: makeSplatArt(seed, SPLAT_RADIUS) });
+    }
+    while (s.splats.length > MAX_SPLATS) s.splats.shift();
+  }
+
+  // Send a throw. The wire carries a TARGET only; the server
+  // owns the origin, the flight and the landing point. We draw
+  // our own arc immediately (same deal as our own walk) and
+  // ignore the server echo of it — see lib/neighborhood/realtime.
+  async function sendThrow(target) {
+    const s = sRef.current;
+    if (!s.conn) {
+      setToast({
+        text: "Tomatoes need the live connection — try a refresh.",
+        id: performance.now(),
+      });
+      return;
+    }
+    const now = Date.now();
+    if (now - s.lastThrowAt < THROW_COOLDOWN_MS) {
+      setToast({
+        text: "One tomato at a time — let that one land.",
+        id: performance.now(),
+      });
+      return;
+    }
+    s.lastThrowAt = now;
+
+    // Optimistic local flight, computed with the shared module
+    // the server uses, so our arc and everyone else's match.
+    const localId = `local-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    let tx = s.pos.x;
+    let ty = s.pos.y;
+    if (target.kind === "spot") {
+      tx = target.x;
+      ty = target.y;
+    } else if (target.kind === "screen") {
+      const rect = screenRectFor(s.room.id);
+      if (rect) {
+        tx = rect.x + target.sx * rect.w;
+        ty = rect.y + target.sy * rect.h;
+      }
+    } else {
+      const peer = s.peers.get(target.targetId);
+      if (peer) {
+        tx = peer.curX;
+        ty = peer.curY;
+      }
+    }
+    const localEv = {
+      id: localId,
+      playerId: s.selfId,
+      kind: target.kind,
+      targetId: target.targetId || null,
+      ox: s.pos.x,
+      oy: s.pos.y,
+      tx,
+      ty,
+      sx: target.sx == null ? null : target.sx,
+      sy: target.sy == null ? null : target.sy,
+      at: now,
+      flightMs: flightDurationMs(
+        s.pos.x,
+        s.pos.y - HAND_LIFT,
+        tx,
+        target.kind === "player" ? ty - BODY_LIFT : ty
+      ),
+    };
+    addThrow(localEv, true);
+    try {
+      await s.conn.throwTomato(target);
+    } catch (err) {
+      dropThrow(localId);
+      s.lastThrowAt = 0;
+      if (err && err.code === "kicked") {
+        handleKicked({ message: err.message, until: err.data && err.data.until });
+        return;
+      }
+      setToast({
+        text: (err && err.message) || "That throw didn't land.",
+        id: performance.now(),
+      });
+    }
+  }
+
+  // Aim, then fire: work out WHAT the armed tap hit — a screen
+  // first (it is mounted on a wall, above everything), then a
+  // player, then plain ground.
+  function throwAtWorldPoint(wx, wy) {
+    const s = sRef.current;
+    const rect = screenRectFor(s.room.id);
+    if (
+      rect &&
+      wx >= rect.x &&
+      wx <= rect.x + rect.w &&
+      wy >= rect.y &&
+      wy <= rect.y + rect.h
+    ) {
+      sendThrow({
+        kind: "screen",
+        sx: (wx - rect.x) / rect.w,
+        sy: (wy - rect.y) / rect.h,
+      });
+      return;
+    }
+    const hit = playerHitAt(s, wx, wy);
+    if (hit) {
+      sendThrow({ kind: "player", targetId: hit.id });
+      return;
+    }
+    sendThrow({
+      kind: "spot",
+      x: Math.min(Math.max(wx, 0), s.room.width),
+      y: Math.min(Math.max(wy, 0), s.room.height),
+    });
+  }
+
+  // Escape disarms, so an armed player is never stuck.
+  useEffect(() => {
+    if (!armed) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setArmed(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [armed]);
 
   // ---- chat ------------------------------------------------
   function pushBubble(playerId, id, text) {
@@ -1519,6 +1862,23 @@ export default function NeighborhoodRoom({
         s.cam.y += (dy2 - s.cam.y) * k;
       }
 
+      // Tomatoes: land the ones whose flight is up, then let
+      // old splats go. Both run off the wall clock, so a tab
+      // that was hidden catches up instead of replaying.
+      const throwNow = Date.now();
+      if (s.tomatoes.length) {
+        const stillFlying = [];
+        for (const tm of s.tomatoes) {
+          if (throwNow - tm.at >= tm.flightMs) landSplat(tm);
+          else stillFlying.push(tm);
+        }
+        s.tomatoes = stillFlying;
+      }
+      if (s.splats.length) {
+        const alive = s.splats.filter((sp) => throwNow - sp.at < SPLAT_LIFE_MS);
+        if (alive.length !== s.splats.length) s.splats = alive;
+      }
+
       // let expired speech bubbles go
       const wallNow = Date.now();
       for (const [id, list] of s.bubbles) {
@@ -1557,6 +1917,75 @@ export default function NeighborhoodRoom({
           const bx = (screen.x - s.cam.x) * s.zoom;
           const by = (screen.y - s.cam.y) * s.zoom;
           box.style.transform = `translate(${bx.toFixed(2)}px, ${by.toFixed(2)}px) scale(${s.zoom.toFixed(4)})`;
+        }
+      }
+
+      // Tomato splats on a big screen (milestone 13). The feed
+      // is a DOM <video>, so a splat painted on the world
+      // canvas would sit BEHIND the picture. This overlay
+      // canvas is pinned to the exact same rect, one z-layer
+      // up, so a tomato lands ON the live video and fades from
+      // there. It stays mounted whenever the room has a screen
+      // — that way its bounding box is also the honest answer
+      // to "where on the screen did that tap land?", in
+      // theater mode as well as on the wall.
+      const fx = screenFxRef.current;
+      if (fx) {
+        const screen = screenRectFor(s.room.id);
+        if (!screen || !s.cam) {
+          if (fx.style.display !== "none") fx.style.display = "none";
+        } else {
+          if (fx.style.display !== "block") fx.style.display = "block";
+          const want = Math.max(1, Math.round(screen.w * s.dpr));
+          const wantH = Math.max(1, Math.round(screen.h * s.dpr));
+          if (fx.width !== want || fx.height !== wantH) {
+            fx.width = want;
+            fx.height = wantH;
+            s.fxPainted = true; // a resize clears it; force one repaint
+          }
+          if (theaterRef.current) {
+            // Match the letterbox of the object-contain video
+            // so a splat stays on the same pixel of picture.
+            const ar = screen.w / screen.h;
+            let w = s.viewW;
+            let h = w / ar;
+            if (h > s.viewH) {
+              h = s.viewH;
+              w = h * ar;
+            }
+            fx.style.width = `${w}px`;
+            fx.style.height = `${h}px`;
+            fx.style.transform = `translate(${((s.viewW - w) / 2).toFixed(2)}px, ${((s.viewH - h) / 2).toFixed(2)}px)`;
+          } else {
+            fx.style.width = `${screen.w}px`;
+            fx.style.height = `${screen.h}px`;
+            const fxX = (screen.x - s.cam.x) * s.zoom;
+            const fxY = (screen.y - s.cam.y) * s.zoom;
+            fx.style.transform = `translate(${fxX.toFixed(2)}px, ${fxY.toFixed(2)}px) scale(${s.zoom.toFixed(4)})`;
+          }
+          // Repaint only while something is on the glass (plus
+          // one final clearing frame), so an idle screen costs
+          // nothing per frame.
+          const wall = [];
+          for (const sp of s.splats) if (sp.kind === "screen") wall.push(sp);
+          if (wall.length || s.fxPainted) {
+            const fctx = fx.getContext("2d");
+            fctx.setTransform(1, 0, 0, 1, 0, 0);
+            fctx.clearRect(0, 0, fx.width, fx.height);
+            fctx.setTransform(s.dpr, 0, 0, s.dpr, 0, 0);
+            for (const sp of wall) {
+              const age = throwNow - sp.at;
+              drawSplat(
+                fctx,
+                sp.art,
+                sp.sx * screen.w,
+                sp.sy * screen.h,
+                splatAlpha(age),
+                splatScale(age)
+              );
+            }
+            s.fxPainted = wall.length > 0;
+          }
         }
       }
       raf = requestAnimationFrame(frame);
@@ -1621,6 +2050,15 @@ export default function NeighborhoodRoom({
     const rect = canvas.getBoundingClientRect();
     const wx = (e.clientX - rect.left) / s.zoom + s.cam.x;
     const wy = (e.clientY - rect.top) / s.zoom + s.cam.y;
+
+    // ARMED (milestone 13): this tap is a throw, and only a
+    // throw — no walking, no doors, no keypads. One tap, one
+    // tomato, then straight back to normal.
+    if (armed) {
+      setArmed(false);
+      throwAtWorldPoint(wx, wy);
+      return;
+    }
 
     // Interactive hotspot? (milestone 8 — the secret chain.)
     // Reveals fire instantly; keypads open the overlay. Each
@@ -1714,6 +2152,23 @@ export default function NeighborhoodRoom({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setArmed((v) => !v)}
+            aria-pressed={armed}
+            title={
+              armed
+                ? "Tap a target to throw — or tap here to cancel"
+                : "Arm a tomato, then tap what you want to hit"
+            }
+            className={`min-h-[44px] rounded-md border px-3 font-display text-xs uppercase tracking-widest transition-colors ${
+              armed
+                ? "border-red-700 bg-red-600 text-white"
+                : "border-red-600 text-red-600 hover:bg-red-600 hover:text-white dark:border-red-500 dark:text-red-400 dark:hover:text-white"
+            }`}
+          >
+            {armed ? "Cancel Aim" : "Tomato"}
+          </button>
+          <button
+            type="button"
             onClick={() => setChatOpen((v) => !v)}
             aria-pressed={chatOpen}
             className={`min-h-[44px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest transition-colors ${
@@ -1768,9 +2223,15 @@ export default function NeighborhoodRoom({
           ref={canvasRef}
           onPointerDown={handlePointerDown}
           onContextMenu={(e) => e.preventDefault()}
-          className="h-full w-full cursor-pointer touch-none select-none"
+          className={`h-full w-full touch-none select-none ${
+            armed ? "cursor-crosshair" : "cursor-pointer"
+          }`}
           style={{ WebkitTouchCallout: "none" }}
-          aria-label={`${roomName} — tap the ground to walk`}
+          aria-label={
+            armed
+              ? `${roomName} — tap a target to throw a tomato`
+              : `${roomName} — tap the ground to walk`
+          }
         />
         {/* Big board feed (milestone 9). Every frame the rAF
             loop re-pins this to the current room's screen rect,
@@ -1792,7 +2253,7 @@ export default function NeighborhoodRoom({
             transformOrigin: "0 0",
             zIndex: theater ? 15 : 5,
             backgroundColor: theater ? "rgba(6,8,12,0.96)" : "#05070c",
-            cursor: "pointer",
+            cursor: armed ? "crosshair" : "pointer",
             touchAction: "none",
             WebkitTouchCallout: "none",
           }}
@@ -1834,6 +2295,31 @@ export default function NeighborhoodRoom({
             </div>
           )}
         </div>
+        {/* Tomato splats on the big screen (milestone 13).
+            Pinned to the same rect as the <video> above, one
+            layer up, so a splat lands ON a live feed instead
+            of behind it. Never takes a pointer — the box below
+            handles taps, armed or not. */}
+        <canvas
+          ref={screenFxRef}
+          aria-hidden="true"
+          style={{
+            display: "none",
+            position: "absolute",
+            left: 0,
+            top: 0,
+            transformOrigin: "0 0",
+            pointerEvents: "none",
+            zIndex: theater ? 16 : 6,
+          }}
+        />
+        {armed && (
+          <div className="pointer-events-none absolute inset-x-0 top-2 z-[11] flex justify-center px-4">
+            <p className="rounded-full border-2 border-red-500 bg-red-600/95 px-4 py-2 text-center text-sm font-semibold text-white shadow-lg">
+              Tomato armed — tap a player, a screen, or anywhere
+            </p>
+          </div>
+        )}
         {chatOpen && (
           <div
             ref={logRef}

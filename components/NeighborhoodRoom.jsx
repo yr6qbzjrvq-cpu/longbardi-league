@@ -1499,11 +1499,21 @@ export default function NeighborhoodRoom({
   // Impact. Splat art is generated from a hash of the throw id,
   // so every browser draws the same splatter without a byte of
   // geometry crossing the wire.
+  //
+  // The splat is stamped with the moment it LANDED (origin time +
+  // flight), not the moment this tab got around to noticing. A
+  // hidden tab has its rAF frozen, so every tomato thrown while
+  // you were away lands on the first frame after you come back —
+  // stamping Date.now() there gave each of them a fresh 4.6s
+  // life and greeted you with a wall of splats from ten minutes
+  // ago. Stamped with the real landing time they are already
+  // expired, and the prune in the rAF loop drops them the same
+  // frame.
   function landSplat(t) {
     const s = sRef.current;
     const seed = seedFromId(t.id);
     const rnd = rngFrom(seed);
-    const base = { id: t.id, kind: t.kind, at: Date.now() };
+    const base = { id: t.id, kind: t.kind, at: t.at + t.flightMs };
     if (t.kind === "screen") {
       s.splats.push({
         ...base,

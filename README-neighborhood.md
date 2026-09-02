@@ -8,7 +8,7 @@ Fast Food Place and the Sports Bar, follow the blinking arrow east to the
 throw tomatoes at any of it — realtime multiplayer, original procedural art
 (every pixel drawn in canvas code, no image assets), phone-friendly.
 
-Built across milestones 1–17; this file is the operator's manual. **It is live
+Built across milestones 1–19; this file is the operator's manual. **It is live
 for the whole league** — `NEIGHBORHOOD_PUBLIC` is true, there is a
 Neighborhood link in the site nav, and anyone with the link can make a
 character and walk in. Moderation, and the ability to put a picture on the
@@ -32,6 +32,8 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | Access gate (flag OR admin cookie) + origin guard | `lib/neighborhoodAccess.js` |
 | Room registry — **one config object per room** | `lib/neighborhood/rooms.js` |
 | Background music synth (Web Audio, zero assets) | `lib/neighborhood/music.js` |
+| Proximity voice chat (mesh, mic, VAD, gains) | `lib/neighborhood/voice.js` |
+| Voice grants (sign/verify, server-only) | `lib/neighborhood/voiceGrant.js` |
 | Pathfinding (nav grid, A*, smoothing) | `lib/neighborhood/pathing.js` |
 | Shared constant-speed walk math | `lib/neighborhood/movement.js` |
 | Tomato flight, splat timing + splat art | `lib/neighborhood/tomatoes.js` |
@@ -52,7 +54,8 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | Blackjack API (seats, bets, cards, money) | `app/api/neighborhood/blackjack/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
-| ICE / TURN credentials (any player in a room with a screen) | `app/api/neighborhood/ice/route.js` |
+| ICE / TURN credentials (any active player, any room) | `app/api/neighborhood/ice/route.js` |
+| Voice grant mint + verify (any unmuted player) | `app/api/neighborhood/voice/route.js` |
 | Moderation API (admin-only) | `app/api/neighborhood/admin/route.js` |
 | Moderation screen | `app/admin/neighborhood/page.jsx` + `components/NeighborhoodModeration.jsx` |
 
@@ -199,8 +202,9 @@ room, and ONE screen-share one shared by every room that has a screen:
 
 | topic | who writes | carries |
 | --- | --- | --- |
-| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw` + presence |
+| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw`, `voice_mute` + presence |
 | `neighborhood-rtc:big-board` | any player watching a screen | the five `rtc-*` screen-share events + presence |
+| `neighborhood-rtc:<roomId>` | any player with voice ON | the seven `voice-*` handshake events + presence (milestone 19; opened only while voice is on) |
 
 The signaling topic was per-room until milestone 12. That quietly capped a
 broadcast at the room it started in: a viewer in the Sports Bar was subscribed
@@ -379,7 +383,12 @@ player: it only ever says yes or no about a grant the caller already holds.
 - `POST /api/neighborhood/broadcast/verify` — any player: is this grant real?
 - `GET/POST /api/neighborhood/ice` — GET: does this deployment have a relay?
   POST: ICE servers (Cloudflare TURN credentials when configured, STUN
-  otherwise) for one active player standing in a room with a screen.
+  otherwise) for one active player standing in the room it asks for. Was
+  screen-rooms-only until milestone 19; voice needs a relay in every room.
+- `POST /api/neighborhood/voice` — voice grants (milestone 19). Default
+  action: mint a grant proving this player may speak here (active, unbanned,
+  in-room, **not muted**), bound to a nonce a specific peer invented.
+  `action: "verify"`: any player asks whether a grant it received is real.
 - `GET/POST /api/neighborhood/admin` — moderation snapshot / actions `mute`,
   `kick` (default 10 min, max 24h), `unkick`, `delete_message`, `prune`.
 
@@ -395,7 +404,11 @@ Dashboard → **Neighborhood Mod** (`/admin/neighborhood`):
   them until the ban lapses, whatever their client does. Lift early with
   **Lift ban**.
 - **Mute**: flips the flag; the chat route answers the polite "you're muted"
-  toast. Everything else (walking, doors) still works.
+  toast, and — since milestone 19 — **voice goes with it**: the admin route
+  broadcasts `voice_mute` on the server-only gameplay topic, so the muted
+  player's mic drops out of every voice mesh immediately and the voice route
+  refuses them new grants until unmuted. Everything else (walking, doors)
+  still works.
 - **Recent messages** across all rooms, each with **Delete** — removal is
   broadcast so open chat logs and speech bubbles drop it live.
 
@@ -1162,3 +1175,117 @@ Hidden Hallway, Mission Control, Casino Strip — is silent **on purpose**.
   Deep Threat arcade overlay ducks the Fast Food track to ~45% instead of
   stopping it. Blackjack shares the casino floor's track — there is no other
   audio in the casino to clash with.
+
+## Proximity voice chat (milestone 19)
+
+Opt-in voice for every room. Tap the mic button and everyone nearby with
+voice on hears you — at a volume that follows the map. Full voice inside
+~120 world px, a smoothstep fade to silence by ~450 (the numbers are
+`VOICE_FULL_DIST` / `VOICE_SILENT_DIST` in `lib/neighborhood/voice.js`, and
+the curve is the exported, testable `voiceGainForDistance()`). Stand at the
+bar together and you are loud and clear; someone across the Town Square is
+a murmur, and the far end of the plaza is nothing.
+
+### The button
+
+One mic button in the room toolbar (44px+, both themes, phone and desktop),
+**default OFF**, cycling OFF → OPEN MIC → PUSH-TO-TALK → OFF on taps. In
+push-to-talk, HOLD the button to talk on a phone, or hold **Space** on a
+desktop — unless you are typing in the chat bar, where Space is just a
+space. The choice persists per browser (`hspn_neighborhood_voice_v1`) and
+re-arms on the next visit; the mic permission prompt always lands on the
+player's own tap. The button turns red while your mic is actually live, and
+a little green dot with equalizer bars floats over the name tag of anyone
+talking (a plain RMS threshold on an analyser node — you get one over your
+own head too, so you can see your mic work). Speaking indicators are drawn
+from the received audio, so only players with voice ON see them.
+
+### How it rides the existing rails
+
+Voice is the screen-share machinery, applied to everyone:
+
+- **Signaling** rides `neighborhood-rtc:<roomId>` — the per-room slot of the
+  rtc topic prefix that has been client-writable under the milestone-10 RLS
+  policies all along (and that a scoped token's `nb_room` claim already
+  names). **No SQL change.** The SCREEN handshake lives on the shared
+  `neighborhood-rtc:big-board` topic, so the two meshes cannot hear each
+  other's events, and a player in the Sports Bar or Mission Control can
+  watch the feed and talk at the same time — verified live, both running.
+  A room's voice channel is only opened while somebody actually has voice
+  on, so a voice-off visit costs zero extra channels.
+- **Trust** is the broadcast-grant story, for everyone: the channel is
+  writable, so both directions of every handshake (offer AND answer) carry
+  a grant only `/api/neighborhood/voice` can mint — refused for anyone not
+  joined, not in the room, banned, or muted — bound to a nonce the
+  receiving peer invented (`lib/neighborhood/voiceGrant.js`, a separate
+  HMAC label from broadcast grants so the two can never validate as each
+  other). No valid grant, no SDP is ever read. Forged offers with garbage
+  grants were fired at a live mesh during the milestone test and were
+  ignored; forged `voice_mute` publishes on the gameplay topic never
+  arrive, because clients still cannot publish there.
+- **Glare** is avoided by convention: the LATER joiner is always the
+  offerer. A newcomer broadcasts `voice-join`, members answer `voice-ack`,
+  the newcomer offers to each. Room hops tear the mesh down (peers hear
+  `voice-leave`) and rebuild it in the new room automatically — the mic
+  stream and AudioContext stay warm across the hop so nothing re-prompts.
+- **TURN**: the same `/api/neighborhood/ice` credential, now for any
+  registry room (validation and rate limits unchanged) — a phone on
+  cellular needs the relay for a voice call exactly as much as for the big
+  board.
+
+### Audio path
+
+`getUserMedia` with echoCancellation, noiseSuppression and autoGainControl
+ON — this is a voice call, the exact opposite of the screen share's
+program-audio tuning. Each remote peer runs source → analyser → gain →
+destination in ONE AudioContext owned by the voice module — deliberately
+NOT the music engine's context, whose suspend-in-silent-rooms lifecycle
+(milestone 18) keeps working untouched; voice and music are separate audio
+paths. The analyser sits before the gain so the speaking dot works even
+for someone faded out across the room. iOS quirks are handled the way the
+music engine taught us: every remote stream also feeds a muted,
+playsinline `<audio>` element (WebAudio will not pull samples otherwise),
+and any tap in the room resumes a suspended context. Gains are applied
+twice over: every few frames from the render loop, and once a VAD tick
+from the mesh's own interval — which is what keeps volumes tracking the
+walk even in a hidden tab, where rAF freezes solid (found and fixed during
+the live test). Positions come from the same deterministic path+timestamp
+math as everything else, so two clients compute byte-identical distances.
+Push-to-talk gates `track.enabled` at the source: released means silence
+on the wire, not attenuation. Voice OFF releases the mic, closes the
+context and the channel — zero audio CPU, no held permission indicator.
+
+### The cap, and the SFU decision for later
+
+A mesh is n·(n-1)/2 links and n-1 uplinks per talker. At **8 talkers** in a
+room, members politely refuse the next `voice-join` with `voice-full` and
+the newcomer's client shows "Voice is full here — try again in a bit"
+instead of letting every link degrade at once. Eight is comfortable for a
+league table on home connections; if league nights ever want the whole
+room on voice at once, the upgrade is an SFU (one uplink per talker,
+server mixes/forwards — Cloudflare Calls or LiveKit are the obvious
+candidates, and the grant/mute model carries over unchanged). That is a
+LATER decision; nothing about today's shape blocks it. The cap logic is
+code-reviewed but not load-tested — nine live browsers was not practical
+in the milestone test.
+
+### Privacy
+
+Voice is **peer-to-peer only**: audio flows browser-to-browser over
+WebRTC (through Cloudflare's TURN relay when a direct path fails — the
+relay forwards encrypted packets, it cannot listen). **Nothing is ever
+recorded, stored, or sent to the server.** No route sees audio; Supabase
+carries only the handshake envelopes. Speech is as ephemeral as it is in a
+real room, which also means — like tomatoes — it leaves **no moderation
+trail**: mute and kick are live controls, not evidence collection.
+
+### Known gaps, honestly
+
+- Players with voice OFF get no hint that someone nearby is talking; the
+  speaking dot is derived from received audio, which they don't have.
+- If Realtime presence stays broken (see "Known limitations") a voice peer
+  whose avatar you have not seen move yet counts as a middling 200px away
+  — audible — until their first move broadcast fixes it. Deliberate:
+  better to hear someone briefly at the wrong volume than not at all.
+- Per-pair grants cost a couple of fetches per join; fine at league scale,
+  another thing an SFU would flatten.

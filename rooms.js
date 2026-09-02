@@ -729,6 +729,7 @@ const TOWN_SQUARE = {
   ],
 
   drawBackground: drawTownBackground,
+  music: "town", // background loop id — see lib/neighborhood/music.js; no key = silent room
 };
 
 // ============================================================
@@ -1062,6 +1063,7 @@ const GROCERY_STORE = {
   ],
 
   drawBackground: drawGroceryBackground,
+  music: "grocery",
 };
 
 // ---- Fast Food Place ---------------------------------------
@@ -1423,6 +1425,7 @@ const FAST_FOOD = {
   ],
 
   drawBackground: drawFastFoodBackground,
+  music: "fastfood",
 };
 
 // ---- Sports Bar --------------------------------------------
@@ -3837,6 +3840,7 @@ const CASINO_FLOOR = {
   ],
 
   drawBackground: drawFloorBackground,
+  music: "casino",
 };
 
 export const ROOMS = {

@@ -78,6 +78,13 @@ import { TEAMS } from "@/lib/leagueData";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import { advanceAlongPath } from "@/lib/neighborhood/movement";
 import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
+import {
+  createVoiceMesh,
+  voiceSupported,
+  resumeVoiceAudio,
+  releaseVoiceMedia,
+  VOICE_MAX,
+} from "@/lib/neighborhood/voice";
 import { CHAT_MAX, validateChatText, bubbleDurationMs } from "@/lib/neighborhood/chat";
 import {
   THROW_COOLDOWN_MS,
@@ -120,6 +127,7 @@ const SIZE_FACTOR = { short: 0.86, medium: 1, tall: 1.14 }; // mirrors drawAvata
 const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
 const LOG_LIMIT = 120; // chat log entries kept in memory
 const MUSIC_KEY = "hspn_neighborhood_music_v1"; // mute choice, per browser
+const VOICE_KEY = "hspn_neighborhood_voice_v1"; // off | open | ptt, per browser
 const FADE_SPEED = 4; // door-transition fade, full swings per second
 const LONG_PRESS_MS = 550; // hold the feed to go OS fullscreen
 // Milestone 14 — the casino. BJ_SYNC_MS is the pulse that
@@ -247,6 +255,34 @@ function drawNameTag(ctx, name, x, y, self) {
   ctx.fill();
   ctx.fillStyle = "#ffffff";
   ctx.fillText(name, x, y + 0.5);
+}
+
+// The little "talking" indicator (milestone 19): a green dot
+// with tiny equalizer bars, floated above the name tag of
+// anyone whose voice is over the VAD threshold — you included,
+// so you can watch your own mic work.
+function drawVoiceDot(ctx, x, y, t) {
+  const pulse = 1 + 0.08 * Math.sin(t * 6);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(pulse, pulse);
+  ctx.beginPath();
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
+  ctx.fillStyle = "#16a34a";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.lineWidth = 1.6;
+  ctx.lineCap = "round";
+  const wob = Math.sin(t * 10);
+  ctx.beginPath();
+  ctx.moveTo(-3, -1.4 - 0.7 * wob);
+  ctx.lineTo(-3, 1.4 + 0.7 * wob);
+  ctx.moveTo(0, -3.2 + 0.8 * wob);
+  ctx.lineTo(0, 3.2 - 0.8 * wob);
+  ctx.moveTo(3, -1.8 + 0.6 * wob);
+  ctx.lineTo(3, 1.8 - 0.6 * wob);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // Greedy word wrap for bubble text; marathon "words" get
@@ -489,6 +525,9 @@ function drawScene(ctx, canvas, s, theme, t) {
       });
       drawStuck(s.selfId, px, py);
       drawNameTag(ctx, s.name, px, tagYFor(s.avatar, py), true);
+      if (s.voiceSpeaking && s.voiceSpeaking.has(s.selfId)) {
+        drawVoiceDot(ctx, px, tagYFor(s.avatar, py) - 22, t);
+      }
     } else if (e.peer) {
       const pr = e.peer;
       const px = e.at ? e.at.x : pr.curX;
@@ -499,6 +538,9 @@ function drawScene(ctx, canvas, s, theme, t) {
       });
       drawStuck(pr.id, px, py);
       drawNameTag(ctx, pr.username, px, tagYFor(pr.avatar, py), false);
+      if (s.voiceSpeaking && s.voiceSpeaking.has(pr.id)) {
+        drawVoiceDot(ctx, px, tagYFor(pr.avatar, py) - 22, t);
+      }
     } else if (e.splat) {
       const age = wallNowDraw - e.splat.at;
       drawSplat(ctx, e.splat.art, e.splat.x, e.splat.y, splatAlpha(age), splatScale(age));
@@ -711,6 +753,15 @@ export default function NeighborhoodRoom({
   // per browser. The synth engine itself lives in
   // lib/neighborhood/music.js and stays inert until a gesture.
   const [musicOn, setMusicOn] = useState(true);
+  // proximity voice (milestone 19)
+  const [voiceMode, setVoiceMode] = useState("off"); // off | open | ptt
+  const [voiceLive, setVoiceLive] = useState(false);
+  const [voiceCount, setVoiceCount] = useState(0);
+  const [pttDown, setPttDown] = useState(false);
+  const voiceRef = useRef(null); // { mesh, roomId }
+  const voiceModeRef = useRef("off");
+  const pttDownRef = useRef(false);
+  const pttTapRef = useRef(0);
   // ---- tomatoes (milestone 13) ----
   // Armed = the NEXT tap is a throw instead of a walk. One
   // obvious state, one obvious cancel; nothing about
@@ -808,6 +859,11 @@ export default function NeighborhoodRoom({
       // chat
       selfId: player?.playerId || "self",
       bubbles: new Map(), // playerId → [{ id, text, at, until }]
+      // proximity voice (milestone 19): who is talking right
+      // now (playerIds, our own included), written by the
+      // mesh's VAD callback and read by the draw loop for the
+      // little indicator over each avatar.
+      voiceSpeaking: new Set(),
       // big board (milestone 9): true while a feed should be
       // painted over the wall — read by the rAF loop
       feedOn: false,
@@ -1055,6 +1111,237 @@ export default function NeighborhoodRoom({
     sc.viewer.announce();
   }
 
+  // ---- proximity voice (milestone 19) -----------------------
+  // Opt-in, default OFF, peer to peer, never recorded. The
+  // mesh lives in lib/neighborhood/voice.js; this section owns
+  // the button, the push-to-talk key, the room lifecycle and
+  // the per-frame distance feed.
+
+  function setVoiceModeBoth(mode) {
+    voiceModeRef.current = mode;
+    setVoiceMode(mode);
+  }
+
+  function detachVoice(keepMedia) {
+    const v = voiceRef.current;
+    voiceRef.current = null;
+    if (v && v.mesh) {
+      try {
+        v.mesh.stop({ keepMedia: !!keepMedia });
+      } catch {
+        // tearing down anyway
+      }
+    }
+    sRef.current.voiceSpeaking = new Set();
+    setVoiceLive(false);
+    setVoiceCount(0);
+  }
+
+  // Wire a voice mesh to a freshly opened room connection —
+  // the attachScreen shape. Voice follows the room exactly
+  // like presence does: hopping a door tears the old mesh down
+  // (peers hear voice-leave) and builds one in the new room,
+  // with the mic and AudioContext kept warm across the hop so
+  // nothing re-prompts.
+  async function attachVoice(conn, targetRoomId, opts) {
+    const silent = !!(opts && opts.silent);
+    if (voiceModeRef.current === "off") {
+      detachVoice(false);
+      return;
+    }
+    detachVoice(true);
+    if (!voiceSupported() || !conn || conn.solo || !conn.openVoice) {
+      setVoiceModeBoth("off");
+      releaseVoiceMedia();
+      if (!silent) {
+        setToast({
+          text: voiceSupported()
+            ? "Voice needs the live multiplayer connection."
+            : "This browser can't do voice chat.",
+          id: performance.now(),
+        });
+      }
+      return;
+    }
+    const v = { mesh: null, roomId: targetRoomId };
+    voiceRef.current = v;
+    v.mesh = createVoiceMesh({
+      conn,
+      selfId: sRef.current.selfId,
+      roomId: targetRoomId,
+      onPeers: (info) => {
+        if (voiceRef.current === v) setVoiceCount(info.count);
+      },
+      onSpeaking: (set) => {
+        if (voiceRef.current === v) sRef.current.voiceSpeaking = set;
+      },
+      // Mesh cap: an 8th talker is already in; a 9th gets this
+      // instead of degrading the whole room. SFU later if
+      // league nights ever outgrow it.
+      onFull: (fullCount) => {
+        if (voiceRef.current !== v) return;
+        detachVoice(false);
+        setVoiceModeBoth("off");
+        setToast({
+          text: `Voice is full here (${fullCount || VOICE_MAX} talking) — try again in a bit.`,
+          id: performance.now(),
+        });
+      },
+      onEnded: (code) => {
+        if (voiceRef.current !== v) return;
+        detachVoice(false);
+        setVoiceModeBoth("off");
+        setToast({
+          text:
+            code === "muted"
+              ? "The commissioner muted you — voice is off too."
+              : "Voice lost the room connection.",
+          id: performance.now(),
+        });
+      },
+    });
+    try {
+      await v.mesh.start();
+      if (voiceRef.current !== v) return;
+      setVoiceLive(true);
+      applyTransmitNow();
+    } catch (err) {
+      if (voiceRef.current === v) voiceRef.current = null;
+      setVoiceModeBoth("off");
+      releaseVoiceMedia();
+      if (!silent) {
+        const name = err && err.name;
+        setToast({
+          text:
+            name === "NotAllowedError" || name === "SecurityError"
+              ? "The mic permission was blocked — allow it in the browser to use voice."
+              : err && err.code === "muted"
+                ? "The commissioner muted you — voice is off too."
+                : "Couldn't start voice — try again in a second.",
+          id: performance.now(),
+        });
+      }
+    }
+  }
+
+  // track.enabled is the transmit gate: open mic is always on,
+  // push-to-talk only while held. Everything reads refs so the
+  // rAF loop and the key handlers stay off React's clock.
+  function applyTransmitNow() {
+    const v = voiceRef.current;
+    if (!v || !v.mesh) return;
+    const mode = voiceModeRef.current;
+    v.mesh.setTransmit(
+      mode === "open" || (mode === "ptt" && pttDownRef.current)
+    );
+  }
+
+  function setPtt(down) {
+    pttDownRef.current = down;
+    setPttDown(down);
+    applyTransmitNow();
+  }
+
+  useEffect(() => {
+    applyTransmitNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode, pttDown, voiceLive]);
+
+  // Push-to-talk key (desktop): hold Space — unless you are
+  // typing in the chat bar or any other field, where Space is
+  // just a space. The keypad and buttons are fine: a focused
+  // BUTTON is not "typing", and preventDefault stops the
+  // browser from clicking it while you talk.
+  useEffect(() => {
+    if (voiceMode !== "ptt") return undefined;
+    const typing = () => {
+      const el = document.activeElement;
+      return !!(
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable)
+      );
+    };
+    const down = (e) => {
+      if (e.code !== "Space" || e.repeat || typing()) return;
+      e.preventDefault();
+      resumeVoiceAudio();
+      setPtt(true);
+    };
+    const up = (e) => {
+      if (e.code !== "Space" || !pttDownRef.current) return;
+      e.preventDefault();
+      setPtt(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      setPtt(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode]);
+
+  function cycleVoiceMode(next) {
+    resumeVoiceAudio();
+    setVoiceModeBoth(next);
+    try {
+      window.localStorage.setItem(VOICE_KEY, next);
+    } catch {
+      // fine — the choice still holds for this visit
+    }
+    if (next === "off") {
+      detachVoice(false);
+      setToast({ text: "Voice off.", id: performance.now() });
+      return;
+    }
+    setToast({
+      text:
+        next === "open"
+          ? "Voice on — open mic. Tap again for push-to-talk."
+          : "Push-to-talk: hold the mic button (or Space) to talk.",
+      id: performance.now(),
+    });
+    if (!voiceRef.current) {
+      attachVoice(sRef.current.conn, sRef.current.room.id);
+    }
+  }
+
+  // The mic button cycles OFF → OPEN MIC → PUSH-TO-TALK → OFF
+  // on taps. In push-to-talk mode HOLDING it is the phone's
+  // talk control, so a quick press-and-release is the "tap".
+  function voiceButtonDown(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (voiceModeRef.current !== "ptt") return;
+    if (e && e.currentTarget && e.currentTarget.setPointerCapture) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // capture is a nicety
+      }
+    }
+    pttTapRef.current = performance.now();
+    resumeVoiceAudio();
+    setPtt(true);
+  }
+
+  function voiceButtonUp() {
+    const mode = voiceModeRef.current;
+    if (mode === "ptt") {
+      const held = performance.now() - pttTapRef.current;
+      setPtt(false);
+      if (held < 300) cycleVoiceMode("off");
+      return;
+    }
+    cycleVoiceMode(mode === "off" ? "open" : "ptt");
+  }
+
+  function voiceButtonCancel() {
+    if (voiceModeRef.current === "ptt" && pttDownRef.current) setPtt(false);
+  }
+
   // Is this browser the commissioner? The server answers; the
   // Share My Screen button doesn't render otherwise.
   useEffect(() => {
@@ -1226,6 +1513,7 @@ export default function NeighborhoodRoom({
       s.moveTimer = null;
     }
     if (conn) conn.detach();
+    detachVoice(false);
     detachScreen();
     if (onRemovedRef.current) onRemovedRef.current(payload || {});
   }
@@ -1286,6 +1574,11 @@ export default function NeighborhoodRoom({
           applyFeed("standby");
         }
         if (sc && sc.broadcaster) sc.broadcaster.dropViewer(id);
+        // Voice follows presence (milestone 19): a peer who
+        // left the room leaves the mesh, whatever state their
+        // connection was in.
+        const vm = voiceRef.current;
+        if (vm && vm.mesh) vm.mesh.dropPeer(id);
         refreshCount();
       },
       onChat: (m) => {
@@ -1314,6 +1607,26 @@ export default function NeighborhoodRoom({
       onBlackjack: (wire) => {
         if (!live()) return;
         applyTable(wire);
+      },
+      // The commissioner muted someone (milestone 19) — voice
+      // follows chat. This event rides the gameplay topic, so
+      // it can only come from the admin route; a peer cannot
+      // forge "you are muted" at anybody.
+      onVoiceMute: (p) => {
+        if (!live() || !p || !p.id || !p.muted) return;
+        if (p.id === player.playerId) {
+          if (voiceModeRef.current !== "off" || voiceRef.current) {
+            detachVoice(false);
+            setVoiceModeBoth("off");
+            setToast({
+              text: "The commissioner muted you — voice is off too.",
+              id: performance.now(),
+            });
+          }
+        } else {
+          const vm = voiceRef.current;
+          if (vm && vm.mesh) vm.mesh.dropPeer(p.id);
+        }
       },
       // Screen-share handshake (milestone 9) — hand every
       // rtc-* event to both peer roles; each ignores what
@@ -1378,6 +1691,23 @@ export default function NeighborhoodRoom({
         attachScreen(conn, s.room.id);
         for (const p of conn.players) applyWire(p);
         refreshCount();
+
+        // Voice preference survives visits (milestone 19). A
+        // stored "open"/"ptt" re-arms automatically — if the
+        // mic permission was revoked since, the attempt fails
+        // silently and the button just reads OFF again.
+        try {
+          const storedVoice = window.localStorage.getItem(VOICE_KEY);
+          if (
+            (storedVoice === "open" || storedVoice === "ptt") &&
+            voiceModeRef.current === "off"
+          ) {
+            setVoiceModeBoth(storedVoice);
+            attachVoice(conn, s.room.id, { silent: true });
+          }
+        } catch {
+          // storage blocked — voice stays off
+        }
 
         // Chat log backfill from the stored trail, so a reload
         // (or late join) shows the recent conversation.
@@ -1445,6 +1775,8 @@ export default function NeighborhoodRoom({
         clearTimeout(s.moveTimer);
         s.moveTimer = null;
       }
+      detachVoice(false);
+      releaseVoiceMedia();
       detachScreen();
       if (s.conn) s.conn.leave();
       s.conn = null;
@@ -1531,6 +1863,10 @@ export default function NeighborhoodRoom({
       s.clockOffset = conn.clockOffset;
       // New room, new channel: rewire (or shut down) the board.
       attachScreen(conn, target.id);
+      // …and the voice mesh, if this player has voice on. The
+      // old room heard voice-leave inside attachVoice's
+      // teardown; the mic stays warm across the hop.
+      attachVoice(conn, target.id);
       for (const p of conn.players) applyWire(p);
       refreshCount();
       conn.updateSelf(s.pos.x, s.pos.y);
@@ -2097,6 +2433,29 @@ export default function NeighborhoodRoom({
         }
       }
 
+      // Proximity voice (milestone 19): every few frames, hand
+      // the mesh fresh avatar distances so each peer's volume
+      // tracks the walk. Same deterministic positions as the
+      // paint; seated players count from their chair.
+      const vMesh = voiceRef.current && voiceRef.current.mesh;
+      if (vMesh) {
+        s.voiceFrame = (s.voiceFrame || 0) + 1;
+        if (s.voiceFrame % 3 === 0) {
+          const selfSeat = s.seatAnchors.get(s.selfId);
+          const vsx = selfSeat ? selfSeat.x : s.pos.x;
+          const vsy = selfSeat ? selfSeat.y : s.pos.y;
+          vMesh.updateDistances((id) => {
+            const p = s.peers.get(id);
+            if (!p) return Infinity;
+            const at = s.seatAnchors.get(id);
+            return Math.hypot(
+              (at ? at.x : p.curX) - vsx,
+              (at ? at.y : p.curY) - vsy
+            );
+          });
+        }
+      }
+
       // camera: exponential ease toward the clamped follow spot
       const viewW = s.viewW / s.zoom;
       const viewH = s.viewH / s.zoom;
@@ -2386,6 +2745,7 @@ export default function NeighborhoodRoom({
     // Browsers only allow audio after a user gesture — the
     // very first walk tap doubles as the music power switch.
     roomMusic.unlock();
+    resumeVoiceAudio(); // iOS un-suspends only on a gesture
     const canvas = canvasRef.current;
     const s = sRef.current;
     if (!canvas || !s.cam) return;
@@ -2571,6 +2931,11 @@ export default function NeighborhoodRoom({
           <span className="rounded-full border border-gray-300 bg-white px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-gray-600 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300">
             {count} here
           </span>
+          {voiceLive && (
+            <span className="rounded-full border border-emerald-500 bg-emerald-600 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-white">
+              Voice · {voiceCount}
+            </span>
+          )}
           {sharing && (
             <span className="rounded-full border border-red-400 bg-red-600 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-white">
               On Air{viewers && viewers.count ? ` · ${viewers.connected}/${viewers.count}` : ""}
@@ -2653,6 +3018,67 @@ export default function NeighborhoodRoom({
                 <path d="m16 9 6 6m0-6-6 6" />
               )}
             </svg>
+          </button>
+          <button
+            type="button"
+            onPointerDown={voiceButtonDown}
+            onPointerUp={voiceButtonUp}
+            onPointerCancel={voiceButtonCancel}
+            aria-pressed={voiceMode !== "off"}
+            aria-label={
+              voiceMode === "off"
+                ? "Turn on voice chat"
+                : voiceMode === "open"
+                  ? "Voice chat is on (open mic) — tap for push-to-talk"
+                  : "Push-to-talk — hold to talk, quick tap to turn voice off"
+            }
+            title={
+              voiceMode === "off"
+                ? "Voice chat: off. Tap to talk to people near you."
+                : voiceMode === "open"
+                  ? "Open mic — people near you hear you. Tap for push-to-talk."
+                  : "Hold this button (or Space) to talk. Quick tap turns voice off."
+            }
+            className={`flex min-h-[44px] min-w-[44px] touch-none select-none items-center justify-center rounded-md border px-2.5 transition-colors ${
+              voiceLive &&
+              (voiceMode === "open" || (voiceMode === "ptt" && pttDown))
+                ? "border-red-700 bg-red-600 text-white"
+                : voiceMode === "ptt"
+                  ? "border-amber-500 text-amber-600 dark:border-amber-500 dark:text-amber-400"
+                  : voiceMode === "open"
+                    ? "border-espn text-espn"
+                    : "border-gray-300 text-gray-400 hover:border-espn hover:text-espn dark:border-gray-600 dark:text-gray-500"
+            }`}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect
+                x="9"
+                y="3"
+                width="6"
+                height="11"
+                rx="3"
+                fill="currentColor"
+                stroke="none"
+              />
+              <path d="M5 11a7 7 0 0 0 14 0" />
+              <path d="M12 18v3" />
+              {voiceMode === "off" && <path d="m4 4 16 16" />}
+            </svg>
+            {voiceMode === "ptt" && (
+              <span className="ml-1 font-display text-[10px] font-semibold uppercase tracking-widest">
+                {pttDown ? "Live" : "Hold"}
+              </span>
+            )}
           </button>
           {canBroadcast && roomId === BROADCAST_ROOM_ID && (
             <>

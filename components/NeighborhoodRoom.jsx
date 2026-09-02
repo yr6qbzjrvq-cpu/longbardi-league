@@ -2770,6 +2770,13 @@ export default function NeighborhoodRoom({
                           TABLE_CHAT_FADE[
                             TABLE_CHAT_FADE.length - tableChat.length + i
                           ] || 1,
+                        // A 200-character message must not blanket
+                        // the felt: two lines here, the rest in the
+                        // Chat Log.
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
                       }}
                       className="max-w-[94%] self-start break-words rounded-2xl bg-black/55 px-3 py-1 text-[13px] leading-snug text-white shadow-sm backdrop-blur-sm"
                     >

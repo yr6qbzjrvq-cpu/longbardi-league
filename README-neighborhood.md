@@ -31,6 +31,7 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | Per-browser identity + username rules | `lib/neighborhoodPlayer.js` |
 | Access gate (flag OR admin cookie) + origin guard | `lib/neighborhoodAccess.js` |
 | Room registry — **one config object per room** | `lib/neighborhood/rooms.js` |
+| Background music synth (Web Audio, zero assets) | `lib/neighborhood/music.js` |
 | Pathfinding (nav grid, A*, smoothing) | `lib/neighborhood/pathing.js` |
 | Shared constant-speed walk math | `lib/neighborhood/movement.js` |
 | Tomato flight, splat timing + splat art | `lib/neighborhood/tomatoes.js` |
@@ -1134,3 +1135,30 @@ Decisions worth writing down:
   who digs one out of their own browser could relay through it until it
   expires. Bounded by the TTL and the 1,000 GB free tier; if that ever
   matters, mint per player and use Cloudflare's revoke endpoint.
+
+## Background music (milestone 18)
+
+Four rooms hum: the **Town Square** (gentle open-air pad + music box), the
+**Grocery Store** (mellow elevator vibraphone), the **Fast Food Place**
+(upbeat jingle bounce) and the **Casino floor** (light jazz shuffle — brushed
+ride, walking bass, EP comping). Every other room — Sports Bar, Restroom,
+Hidden Hallway, Mission Control, Casino Strip — is silent **on purpose**.
+
+- Zero assets: every note is synthesized in `lib/neighborhood/music.js` with
+  the Web Audio API (oscillators, filters, envelopes, one shared noise buffer
+  for the brushes). Patterns are scheduled a lookahead at a time with a pinch
+  of randomness per bar, so nothing loops verbatim.
+- Config-as-data: a room opts in with one registry key, `music: "<track id>"`.
+  No key = silent. New room, new vibe = one line plus (maybe) one new track
+  entry in `TRACKS`.
+- Autoplay policy: browsers gate audio behind a user gesture, so the engine is
+  inert until the first tap in the room (walking counts). Room hops crossfade
+  ~1s; silent rooms fade to nothing and then the whole AudioContext is
+  **suspended** — zero audio CPU where there is no music.
+- The speaker button in the room toolbar mutes/unmutes; the choice persists in
+  `localStorage` (`hspn_neighborhood_music_v1`). Default is ON at a low,
+  background-appropriate volume.
+- Hidden tab = faded out + suspended; the track picks back up on return. The
+  Deep Threat arcade overlay ducks the Fast Food track to ~45% instead of
+  stopping it. Blackjack shares the casino floor's track — there is no other
+  audio in the casino to clash with.

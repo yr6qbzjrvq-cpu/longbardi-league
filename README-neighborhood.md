@@ -8,7 +8,7 @@ Fast Food Place and the Sports Bar, follow the blinking arrow east to the
 throw tomatoes at any of it — realtime multiplayer, original procedural art
 (every pixel drawn in canvas code, no image assets), phone-friendly.
 
-Built across milestones 1–10; this file is the operator's manual. **It is live
+Built across milestones 1–17; this file is the operator's manual. **It is live
 for the whole league** — `NEIGHBORHOOD_PUBLIC` is true, there is a
 Neighborhood link in the site nav, and anyone with the link can make a
 character and walk in. Moderation, and the ability to put a picture on the
@@ -1044,6 +1044,35 @@ are pure: one definition of the rules, imported by both the client and the
 route.
 
 Run it with `node scripts/test-blackjack.mjs`.
+
+## The arcade (milestone 17)
+
+The Fast Food Place has a Deep Threat cabinet against its left wall — navy
+body, chasing marquee bulbs, an attract-mode football looping on the little
+screen. Tap it and your avatar walks over; on the arrival frame
+`NeighborhoodRoom` mounts the REAL Deep Threat game full-screen over the
+world, blackjack-overlay style (`absolute inset-0 z-30` inside the canvas
+frame — no new tab, no iframe). Nothing pauses underneath: the room
+connection and the 30-second heartbeats keep running, so a marathon session
+at the machine never gets you pruned from the room — everyone else just sees
+your avatar standing at the cabinet. "✕ Back to the Restaurant" (44px+,
+Escape works too) unmounts the game and you are exactly where you stood.
+
+Decisions worth writing down:
+
+- **Same leaderboard as the website.** The game is
+  `components/DeepThreatGame.jsx` itself — it fetches
+  `/api/deep-threat/leaderboard` on its own, so the arcade adds no second
+  board and no new route. A top-10 run at the cabinet IS a top-10 run on
+  `/deep-threat` (which is live for everyone: `DEEPTHREAT_PUBLIC` is true in
+  `lib/leagueData.js`, same as `NEIGHBORHOOD_PUBLIC`).
+- **Lazy-loaded.** `next/dynamic` keeps the game out of the neighborhood
+  bundle until somebody actually taps the machine.
+- **No spectator screen.** An arcade from behind is a person at a machine;
+  that is what peers see. The cabinet art and the `arcade` config (hotspot +
+  approach — the chair/door walk-then-act shape) live in the Fast Food Place
+  entry in `lib/neighborhood/rooms.js`; the interaction, the overlay and the
+  exit control live in `components/NeighborhoodRoom.jsx`.
 
 ## Known limitations
 

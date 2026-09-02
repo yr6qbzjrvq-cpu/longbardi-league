@@ -976,6 +976,27 @@ Phase clocks: 20s to bet, **25s per decision**, ~0.9s beats for the deal and
 each dealer card, 6s on the results before the next hand. A turn that times out
 **auto-stands** — never auto-hits, which would spend an absent player's money.
 
+### The deal you see is theater (m20)
+
+The server still resolves a deal or a draw **atomically** — one broadcast, all
+cards already in the state. What changed in m20 is the client: a small
+choreographer (`lib/neighborhood/dealAnim.js`) diffs each broadcast against the
+last one and hides freshly dealt cards for a few hundred milliseconds while
+they slide, one at a time, out of a shoe drawn at the top right of the felt.
+The opening deal runs in real casino order (first card to each player in seat
+order, then the dealer's up card; second round, then the hole card face down),
+hits/doubles/split cards slide in singly, and the hole card **flips** over
+where it lies at the reveal. Totals and payout badges hold back until the
+cards they describe have landed.
+
+None of it touches the rules, the clock, or the wire: the animator can only
+*hide* a card the server already dealt, buttons are driven by the wire alone
+(you can act while cards are still flying), scheduling runs on `Date.now()` so
+a hidden tab — where rAF freezes — wakes up with every flight already finished
+and simply snaps to the truth, and once the queue drains the painted felt is
+byte-for-byte the broadcast state again. Every client sees the same broadcasts,
+so every client watches the same deal.
+
 ### Seats never get stuck
 
 Four different ways a seat comes back, all of them server-side:

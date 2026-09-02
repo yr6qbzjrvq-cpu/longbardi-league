@@ -3,9 +3,10 @@
 A Club Penguin-style browser world for the league, living at `/neighborhood`
 on the HSPN site (longbardi-league.vercel.app, a.k.a. hspn.vercel.app). Make a
 character, walk the Town Square, step through doors into the Grocery Store, the
-Fast Food Place and the Sports Bar, chat with whoever's around, and throw
-tomatoes at any of it — realtime multiplayer, original procedural art (every
-pixel drawn in canvas code, no image assets), phone-friendly.
+Fast Food Place and the Sports Bar, follow the blinking arrow east to the
+**casino** and play real multiplayer blackjack, chat with whoever's around, and
+throw tomatoes at any of it — realtime multiplayer, original procedural art
+(every pixel drawn in canvas code, no image assets), phone-friendly.
 
 Built across milestones 1–10; this file is the operator's manual. **It is live
 for the whole league** — `NEIGHBORHOOD_PUBLIC` is true, there is a
@@ -33,6 +34,9 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | Pathfinding (nav grid, A*, smoothing) | `lib/neighborhood/pathing.js` |
 | Shared constant-speed walk math | `lib/neighborhood/movement.js` |
 | Tomato flight, splat timing + splat art | `lib/neighborhood/tomatoes.js` |
+| Blackjack rules engine (pure, testable) | `lib/neighborhood/blackjack.js` |
+| First-person table art + card/chip drawing | `lib/neighborhood/casinoTable.js` |
+| Blackjack rules harness (`node scripts/test-blackjack.mjs`) | `scripts/test-blackjack.mjs` |
 | Chat text rules (sanitize, cap, filter) | `lib/neighborhood/chat.js` |
 | Server helpers + Realtime broadcast | `lib/neighborhood/multiplayerServer.js` |
 | Client realtime transport | `lib/neighborhood/realtime.js` |
@@ -42,7 +46,9 @@ screen over the counter, which shows the same feed — stay commissioner-only.
 | TURN relay credentials (server) | `lib/neighborhood/turnCredentials.js` |
 | Channel RLS policies (run once) | `supabase/neighborhood_realtime_auth.sql` |
 | Tomato rate limit + column (run once) | `supabase/neighborhood_tomatoes.sql` |
+| Casino wallets + blackjack tables (run once) | `supabase/neighborhood_casino.sql` |
 | Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,throw,token}/route.js` |
+| Blackjack API (seats, bets, cards, money) | `app/api/neighborhood/blackjack/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
 | ICE / TURN credentials (any player in a room with a screen) | `app/api/neighborhood/ice/route.js` |
@@ -133,6 +139,29 @@ The chat trail: `id` (uuid), `player_id`, `username`, `room`, `text`,
 moderation view (last 40 overall). Text is sanitized to plain text before
 insert; deletes happen only through the moderation API.
 
+### Table `neighborhood_wallets` (milestone 14)
+
+Play-money balances for the casino. `id` (player id, PK), `balance` (integer,
+`>= 0`, default 100), `created_at`, `updated_at`. RLS on, zero policies.
+
+**It is deliberately not a column on `neighborhood_players`.** That table is
+deleted on a clean leave and pruned when a row goes stale, so a balance kept
+there would be wiped every time somebody closed a tab. This one is never
+pruned — the row is the player's bankroll.
+
+### Table `neighborhood_blackjack` (milestone 14)
+
+One row per table; today there is exactly one, `casino-floor:main`. Columns:
+`id` (PK), `state` (jsonb — the entire game), `version` (bigint), `updated_at`.
+RLS on, zero policies.
+
+`version` is an optimistic lock. Every write is
+`update ... set state = $1, version = version + 1 where id = $2 and version = $3`,
+so two lambdas acting on the same hand cannot both win: the loser sees zero
+rows updated, re-reads and retries (four attempts, then a 503 the client
+retries on its next sync). No advisory locks and no transaction held open
+across a request.
+
 ### SQL functions (Database → Functions in the Supabase dashboard)
 
 All three are `plpgsql`, `SECURITY DEFINER`, `SET search_path TO 'public'`, and
@@ -151,6 +180,16 @@ cap. All return `'ok'`, `'rate_limited'` or `'not_joined'`.
   PUBLIC execute grant is revoked — it is `SECURITY DEFINER`, so leaving the
   default in place would let anyone holding the anon key stamp `throw_times`
   on a player id they know. Worth doing to the older two as well.
+- `neighborhood_record_bj(p_id text, p_now_ms bigint)` — same shape on
+  `bj_times` with a 3000ms window and a cap of 6 (~2 table actions/sec).
+  Anti-spam only: the table's own phase machine is what refuses an
+  out-of-turn move. Execute is granted to `service_role` only.
+- `neighborhood_casino_enter(p_id text, p_start integer, p_floor integer)` —
+  the $100. One atomic upsert: creates the wallet on a first-ever visit, and
+  tops a returning player back up to `p_start` if their balance has fallen
+  below `p_floor`. Two tabs entering at once therefore cannot double-grant.
+  Returns the balance. Execute is granted to `service_role` only. Source for
+  both: `supabase/neighborhood_casino.sql`.
 
 ### Realtime channels
 
@@ -317,6 +356,10 @@ player: it only ever says yes or no about a grant the caller already holds.
 - `POST /api/neighborhood/move` — client sends a destination only; server
   computes the current position deterministically, runs the same A*, stores +
   broadcasts. Implicit speed cap. Rate-limited in Postgres.
+- `POST /api/neighborhood/blackjack` — every casino action behind one route:
+  `enter` (claim the $100), `sync` (advance the clock), `sit`, `stand`, `bet`,
+  `ready`, `hit`, `stay`, `double`, `split`. Clients send an INTENT, never an
+  outcome and never a card. See "The casino" below.
 - `POST /api/neighborhood/heartbeat` — bumps `last_seen` (never for banned
   rows).
 - `POST /api/neighborhood/leave` — deletes the row + broadcasts (spares
@@ -763,6 +806,176 @@ throwing. Every control is 44px+ tall.
 before the interact/door/pathfinding code ever runs, so an armed tap can't open
 a keypad or step through a door either — one tap, one tomato, straight back to
 normal.
+
+## The casino (milestone 14)
+
+On the right-hand side of the Town Square there is now a paved path heading
+east, with a big roadside arrow — CASINO, in Oswald, ringed by bulbs that chase
+around the board and run out into the point of the arrow. Walk to the end of
+the path and you are on the **Casino Strip**; one building, a marquee that
+never stops blinking, and a door. Through the door is the **Casino** floor:
+loud patterned carpet, six slot machines along the walls (scenery — they spin
+and blink and that is all they do), a cashier cage, and a blackjack table in
+the middle with three chairs.
+
+Sit in a chair and the view changes to first person: you are looking at the
+felt from your seat, the dealer is across from you, your cards are the big ones
+at the bottom and the other two players are to your left and right. Everyone
+else in the room keeps walking around, chatting and throwing tomatoes as
+normal, and sees your avatar sitting in the chair.
+
+### The rooms
+
+Two ordinary registry entries, `casino-strip` and `casino-floor` — multiplayer,
+chat, tomatoes, capacity and moderation all work because nothing about them is
+special-cased anywhere. Both set `fitRoom: true`, for the reason Mission
+Control and the Sports Bar do: the marquee and the BLACKJACK sign hang above
+the walkable floor, and the camera follows your feet.
+
+The Town Square itself is now **1120 wide instead of 960**. The extra 160px on
+the east is the path. Nothing else moved — every prop, building and exit in
+that room is positioned absolutely — and the zoom is unchanged in practice,
+because Town Square's *height* is the binding axis at every viewport we
+support. The path is not drawn by a path-drawing function: it is a spur added
+to the room's `walkable` polygon, and the existing plaza code pours and curbs
+whatever that polygon says. One new exit key, `noMat`, keeps the casino door
+out of the loop that paints welcome mats at the three shop doors.
+
+`casino-floor` adds one genuinely new config key, `seats`, handled by the room
+engine exactly the way `exits` are: tap a chair, walk to its `approach`, and on
+arrival ask the server for the seat. `anchor` is where a seated player's avatar
+is painted. `CASINO_TABLE_SEATS` is exported from the registry because the room
+engine and the blackjack route both need it and it must never drift between
+them.
+
+### House rules, as implemented
+
+Chosen to be the plain, boring, standard versions — a friendly league table,
+not a rules-lawyer's table. All of it lives in `lib/neighborhood/blackjack.js`
+and all of it is covered by `node scripts/test-blackjack.mjs` (144 assertions).
+
+| Rule | Choice |
+| --- | --- |
+| Shoe | 6 decks, shuffled server-side with a crypto-seeded Fisher-Yates |
+| Cut card | 75% penetration; a shoe past it is replaced **between** hands, never mid-hand |
+| Dealer | **stands on all 17s, including soft 17** (S17) |
+| Blackjack | pays **3:2**, first two cards of an unsplit hand only |
+| 21 after a split | just 21. Pays 1:1 |
+| Push | bet returned, including player blackjack vs dealer blackjack |
+| Double down | any first two cards, **including after a split**. Exactly one card, then the hand stands |
+| Split | any two cards of **equal value** (so K-Q may be split). Up to **3 splits = 4 hands** |
+| Split aces | one card each, then stand. **No re-splitting aces, no doubling them** |
+| Insurance | **not offered.** Not implemented anywhere |
+| Seats | 3. Turn order is seat 1, 2, 3 |
+| Bets | $5 minimum, $100 maximum, whole dollars, chips of 5/25/100 |
+
+Two edges worth stating out loud. A 3:2 payout on an odd bet rounds **down**,
+in the house's favour — with a $5 minimum and whole-dollar chips the only way
+to hit it is a bet like $25 ($37 instead of $37.50). And the dealer does not
+draw to an audience of busted hands: if every live hand has gone over, the hole
+card is turned and the hand is settled without a pointless draw.
+
+### The clock, and why there is no cron
+
+Blackjack needs time to pass on its own: a betting window closes, a turn times
+out, the dealer draws one card at a time. Vercel functions do not run between
+requests, so the clock is **pulled, not pushed**. Every client in either casino
+room posts `sync` every 2.5s, and `BJ.tick()` advances the table by comparing
+`now` to the deadline **stored in the state**.
+
+That works because `tick()` is idempotent and deadline-driven: it does not
+matter who calls it, how often, or whether two lambdas call it at the same
+instant — the version guard means only one write lands, and the loser re-reads
+a table that has already moved on. It also self-heals. If everyone walks out
+mid-hand the table simply freezes, and the next person through the door ticks
+it forward and reaps the empty seats on their first sync.
+
+Phase clocks: 20s to bet, **25s per decision**, ~0.9s beats for the deal and
+each dealer card, 6s on the results before the next hand. A turn that times out
+**auto-stands** — never auto-hits, which would spend an absent player's money.
+
+### Seats never get stuck
+
+Four different ways a seat comes back, all of them server-side:
+
+1. **Leave Table** — stands you up. Between hands the seat empties at once and
+   an uncommitted bet is refunded.
+2. **Leave Table mid-hand** — the seat is flagged `leaving` and your hands
+   auto-stand. The hand plays out normally, and **you are still paid** — the
+   winnings go to your wallet even though the seat is gone by then. The seat
+   frees at payout.
+3. **Disconnect / walk out / close the tab** — nobody has to press anything.
+   Every `sync` checks each seated player's `neighborhood_players` row; a seat
+   whose player has been pruned, has gone stale, or has left the room is stood
+   up automatically, with the same mid-hand handling as above.
+4. **Turn timeout** — does not free the seat, but never lets a hand hang.
+
+A fourth player simply cannot sit: three seats, and the seat check is the
+server's, not the button's.
+
+### Money
+
+**Play money. There is no real currency anywhere in this feature, nothing can
+be bought, and nothing can be cashed out. `balance` is a score.** Please keep it
+that way.
+
+- Walking into either casino room calls `enter`, which grants **$100 on a
+  player's first ever visit**.
+- A player who comes back **below the $5 table minimum is topped back up to
+  $100**. This is deliberately the table minimum rather than $0: somebody
+  sitting on $3 can no more make a bet than somebody on $0, and being locked
+  out of the only game in town is a worse outcome than a free refill. Practical
+  consequence: **the casino cannot be lost at, only won at** — a busted player
+  is always back to $100 next visit. If that ever feels too generous, the floor
+  and the grant are two arguments to one SQL function.
+- Bets are debited and paid **only** by the route. The engine moves the money
+  into a per-seat mirrored balance, and the route persists **absolute** numbers
+  to `neighborhood_wallets`, never deltas — so a dropped write is corrected by
+  the next one instead of compounding. Balances are re-seeded from the wallet
+  whenever a betting window is open.
+- The balance shows as a green chip badge in the room header and again on the
+  felt.
+
+**One ordering rule the route must keep.** Inside the request the wallet
+re-seed happens **before** `BJ.tick()`, never after. `tick()` credits winnings
+straight into the seat's mirrored balance, and the wallet row does not learn
+about them until `persistWallets()` runs at the end of the request — so a
+re-seed placed after the tick overwrites every credit with the stale
+pre-payout number and then persists *that*. The first live table did exactly
+this: players were charged for their bets and never paid. The fix is the order,
+and `scripts/test-blackjack.mjs` now asserts it both ways so it cannot come
+back.
+
+### What stops a forged hand
+
+The same thing that stops a forged walk. Clients **cannot publish on the
+gameplay Realtime topic** (RLS on `realtime.messages`, see
+`supabase/neighborhood_realtime_auth.sql`), so a `blackjack` broadcast can only
+have come from the route, which holds the service-role key. Both new tables are
+RLS-on with **zero policies**, so the anon key cannot read a shoe or write a
+balance either. And both new SQL functions are `SECURITY DEFINER` with their
+PUBLIC execute grant revoked — otherwise anyone holding the anon key could mint
+themselves $100.
+
+The client is never told anything it should not know: `BJ.toWire()` strips the
+**shoe** entirely and replaces the dealer's **hole card with a boolean**, so
+there is nothing in the payload to peek at. (A test asserts this: the wire JSON
+must not contain the hidden card.) The client's own legality helpers only decide
+whether a *button is greyed out* — the server re-checks every one of them with
+the same functions before it moves a card, so a hand-crafted request gets a 409
+and a fresh copy of the true state.
+
+### The engine is a pure module
+
+`lib/neighborhood/blackjack.js` does no I/O, has no randomness of its own and
+never calls `Date.now()`. Every entry point takes the state plus an explicit
+`now` and returns a new state. That is what makes `scripts/test-blackjack.mjs`
+possible — it stacks a shoe, deals a known hand, and asserts the outcome and
+the exact dollar movement — and it is the same reason `pathing` and `movement`
+are pure: one definition of the rules, imported by both the client and the
+route.
+
+Run it with `node scripts/test-blackjack.mjs`.
 
 ## Known limitations
 

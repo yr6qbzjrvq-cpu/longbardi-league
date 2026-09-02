@@ -72,6 +72,8 @@ import {
 } from "@/lib/neighborhood/rooms";
 import * as BJ from "@/lib/neighborhood/blackjack";
 import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
+import dynamic from "next/dynamic";
+import { TEAMS } from "@/lib/leagueData";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import { advanceAlongPath } from "@/lib/neighborhood/movement";
 import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
@@ -145,6 +147,21 @@ const BUBBLE_LINE_H = 17;
 const BUBBLE_PAD_X = 11;
 const BUBBLE_PAD_Y = 8;
 const BUBBLE_MAX_PER_PLAYER = 3; // rapid-fire stacks, oldest drops
+
+// Milestone 17 — the arcade machine in the Fast Food Place.
+// The cabinet mounts the SAME DeepThreatGame the /deep-threat
+// page uses (own canvas, own /api/deep-threat/leaderboard
+// fetch), lazy-loaded so nobody downloads a football game
+// just to walk around town.
+const DeepThreatGame = dynamic(() => import("@/components/DeepThreatGame"), {
+  ssr: false,
+  loading: () => (
+    <p className="py-12 text-center font-display text-sm uppercase tracking-widest text-gray-500">
+      Powering up the cabinet…
+    </p>
+  ),
+});
+const ARCADE_NAMES = TEAMS.map((t) => t.manager);
 
 // Camera offset for one axis: follow the player, clamp to the
 // room, center (negative offset) when the room fits the view.
@@ -679,6 +696,14 @@ export default function NeighborhoodRoom({
   const [chatDraft, setChatDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [keypad, setKeypad] = useState(null); // open keypad interact config (milestone 8)
+  // Milestone 17 — the arcade. True while the Deep Threat
+  // cabinet has the viewport. Same overlay contract as the
+  // blackjack table: the world, the connection and the 30s
+  // heartbeats keep running underneath, so a long game never
+  // reads as idle to the server-side stale prune.
+  const [arcadeOpen, setArcadeOpen] = useState(false);
+  const arcadeFnRef = useRef(null);
+  arcadeFnRef.current = () => setArcadeOpen(true);
   // ---- tomatoes (milestone 13) ----
   // Armed = the NEXT tap is a throw instead of a walk. One
   // obvious state, one obvious cancel; nothing about
@@ -789,6 +814,8 @@ export default function NeighborhoodRoom({
       // table state. Empty in every room but the casino floor.
       seatAnchors: new Map(),
       pendingSeat: null,
+      // arcade (milestone 17): true while walking to the cabinet
+      pendingArcade: false,
       // doors (milestone 6)
       destroyed: false,
       connGen: 0, // bumps per connection; stale events are dropped
@@ -1446,6 +1473,7 @@ export default function NeighborhoodRoom({
       // view and the chairs go away with the room.
       s.seatAnchors = new Map();
       s.pendingSeat = null;
+      s.pendingArcade = false;
       s.walk = null;
       s.walking = false;
       s.walkT = 0;
@@ -1800,6 +1828,16 @@ export default function NeighborhoodRoom({
     return () => window.removeEventListener("keydown", onKey);
   }, [armed]);
 
+  // Escape steps away from the arcade cabinet too.
+  useEffect(() => {
+    if (!arcadeOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setArcadeOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [arcadeOpen]);
+
   // ---- chat ------------------------------------------------
   function pushBubble(playerId, id, text) {
     const s = sRef.current;
@@ -1968,6 +2006,13 @@ export default function NeighborhoodRoom({
         const seatIndex = s.pendingSeat;
         s.pendingSeat = null;
         if (seatFnRef.current) seatFnRef.current(seatIndex);
+      }
+      // Arrived at the arcade cabinet (milestone 17) — power it
+      // on. pendingArcade only exists while a walk to the
+      // machine is in flight, same reasoning as the chair above.
+      if (!moving && s.pendingArcade) {
+        s.pendingArcade = false;
+        if (arcadeFnRef.current) arcadeFnRef.current();
       }
       s.walking = moving;
 
@@ -2304,6 +2349,10 @@ export default function NeighborhoodRoom({
       return;
     }
 
+    // A fresh tap re-aims the walk, so an arcade power-on
+    // queued behind the OLD walk must not fire on arrival.
+    s.pendingArcade = false;
+
     // Interactive hotspot? (milestone 8 — the secret chain.)
     // Reveals fire instantly; keypads open the overlay. Each
     // only answers while its flag is still unset — after that
@@ -2324,6 +2373,34 @@ export default function NeighborhoodRoom({
         s.flagTimes[act.flag] = performance.now() / 1000;
         if (act.toast) setToast({ text: act.toast, id: performance.now() });
       }
+      return;
+    }
+
+    // Arcade cabinet tap? (Milestone 17.) Walk to the machine,
+    // then the game mounts on the arrival frame — the same
+    // walk-then-act shape as chairs and doors.
+    const arcade = s.room.arcade;
+    if (
+      arcade &&
+      wx >= arcade.hotspot.x &&
+      wx <= arcade.hotspot.x + arcade.hotspot.w &&
+      wy >= arcade.hotspot.y &&
+      wy <= arcade.hotspot.y + arcade.hotspot.h
+    ) {
+      const spot = nearestWalkable(s.room, s.grid, arcade.approach.x, arcade.approach.y);
+      if (!spot) return;
+      const path = findPath(s.room, s.grid, s.pos.x, s.pos.y, spot.x, spot.y);
+      s.pendingExit = null;
+      s.pendingSeat = null;
+      if (path.length === 0) {
+        // already standing at the machine
+        setArcadeOpen(true);
+        return;
+      }
+      s.pendingArcade = true;
+      s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
+      s.marker = { x: spot.x, y: spot.y, t: performance.now() };
+      if (s.conn) queueMoveSend(spot.x, spot.y);
       return;
     }
 
@@ -2905,6 +2982,37 @@ export default function NeighborhoodRoom({
               >
                 Leave Table
               </button>
+            </div>
+          </div>
+        )}
+        {/* The arcade (milestone 17). The Fast Food Place
+            cabinet, full-screen: the REAL Deep Threat game —
+            same component and leaderboard as the /deep-threat
+            page — over the world, blackjack-overlay style
+            (absolute inset-0, z-30). The room keeps running
+            underneath, heartbeats included, so peers just see
+            you standing at the machine. Kept light in both
+            themes on purpose: the game is styled for a light
+            page, and the glow reads as the cabinet’s own
+            light. */}
+        {arcadeOpen && (
+          <div className="absolute inset-0 z-30 flex flex-col bg-gray-100">
+            <div className="flex items-center justify-between gap-2 border-b-2 border-espn bg-white px-3 py-2">
+              <p className="font-display text-base font-semibold uppercase tracking-widest text-gray-900">
+                Deep Threat
+              </p>
+              <button
+                type="button"
+                onClick={() => setArcadeOpen(false)}
+                className="min-h-[44px] rounded-md border border-espn bg-white px-3 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+              >
+                ✕ Back to the Restaurant
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 pt-3">
+              <div className="mx-auto w-full max-w-3xl">
+                <DeepThreatGame names={ARCADE_NAMES} />
+              </div>
             </div>
           </div>
         )}

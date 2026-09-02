@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/supabase";
 import { canSeeNeighborhood, sameOrigin } from "@/lib/neighborhoodAccess";
-import { roomHasScreen } from "@/lib/neighborhood/rooms";
+import { ROOMS } from "@/lib/neighborhood/rooms";
 import {
   TABLE,
   PLAYER_ID_RE,
@@ -42,11 +42,14 @@ export const dynamic = "force-dynamic";
 //      neighborhood_players — joined, heartbeating inside the
 //      75s window — and is not serving a kick;
 //   3. that row must be standing in the room it is asking for,
-//      and that room must have a screen — Mission Control or
-//      the Sports Bar since milestone 12, when one broadcast
-//      started lighting up both. A viewer in the bar needs a
-//      relay for exactly the same reason a viewer in Mission
-//      Control does;
+//      and that room must exist in the registry. Until
+//      milestone 19 the room also had to HAVE A SCREEN —
+//      screen-share peers were the only callers. Proximity
+//      voice builds the same kind of peer connection in every
+//      room, and a phone on cellular needs the relay for a
+//      voice call exactly as much as for the big board, so the
+//      screen check became a registry check. Everything else
+//      about the gate is unchanged;
 //   4. a sliding-window rate limit per player and per IP.
 // A stranger with the URL gets 404/400; a leaguemate can ask
 // as often as the limit allows and always receives the same
@@ -137,9 +140,9 @@ export async function POST(request) {
         { status: 400 }
       );
     }
-    if (!roomHasScreen(roomId)) {
+    if (!Object.prototype.hasOwnProperty.call(ROOMS, roomId)) {
       return NextResponse.json(
-        { error: "There is no screen in that room.", code: "bad_room" },
+        { error: "That room doesn't exist.", code: "bad_room" },
         { status: 400 }
       );
     }

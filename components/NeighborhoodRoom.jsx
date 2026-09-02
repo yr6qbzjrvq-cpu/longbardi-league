@@ -2603,7 +2603,7 @@ export default function NeighborhoodRoom({
       <div
         ref={wrapRef}
         className="relative w-full overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
-        style={{ height: "clamp(420px, calc(100dvh - 210px), 860px)" }}
+        style={{ height: "clamp(420px, calc(100dvh - 262px), 860px)" }}
       >
         <canvas
           ref={canvasRef}
@@ -2760,39 +2760,13 @@ export default function NeighborhoodRoom({
           <div
             aria-live="polite"
             className={`pointer-events-none absolute inset-x-0 z-40 flex justify-center px-4 ${
-              atTable ? "bottom-[11rem]" : "bottom-[4.25rem]"
+              atTable ? "bottom-[11rem]" : "bottom-2"
             }`}
           >
             <p className="rounded-full bg-black/70 px-4 py-2 text-center text-sm font-medium text-white">
               {toast.text}
             </p>
           </div>
-        )}
-        {!atTable && (
-          <form
-            ref={chatBarRef}
-            onSubmit={handleChatSubmit}
-            className="absolute inset-x-2 bottom-2 z-20 flex items-center gap-2"
-          >
-            <input
-              type="text"
-              value={chatDraft}
-              onChange={(e) => setChatDraft(e.target.value)}
-              maxLength={CHAT_MAX}
-              placeholder="Say something…"
-              enterKeyHint="send"
-              autoComplete="off"
-              aria-label="Chat message"
-              className="h-11 min-w-0 flex-1 rounded-full border border-gray-300 bg-white/95 px-4 text-[16px] text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-espn dark:border-gray-600 dark:bg-gray-900/95 dark:text-gray-100"
-            />
-            <button
-              type="submit"
-              disabled={chatBusy}
-              className="h-11 min-w-[64px] rounded-full bg-espn px-4 font-display text-xs uppercase tracking-widest text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              Send
-            </button>
-          </form>
         )}
         {bjSeated && bjMin && (
           <button
@@ -3024,6 +2998,35 @@ export default function NeighborhoodRoom({
           />
         )}
       </div>
+      {/* World chat bar — its own row BELOW the canvas so it never
+          covers floor or door hotspots. Same ref: the visualViewport
+          hook still lifts it above a mobile keyboard. */}
+      {!atTable && (
+        <form
+          ref={chatBarRef}
+          onSubmit={handleChatSubmit}
+          className="mt-2 flex items-center gap-2"
+        >
+          <input
+            type="text"
+            value={chatDraft}
+            onChange={(e) => setChatDraft(e.target.value)}
+            maxLength={CHAT_MAX}
+            placeholder="Say something…"
+            enterKeyHint="send"
+            autoComplete="off"
+            aria-label="Chat message"
+            className="h-11 min-w-0 flex-1 rounded-full border border-gray-300 bg-white/95 px-4 text-[16px] text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-espn dark:border-gray-600 dark:bg-gray-900/95 dark:text-gray-100"
+          />
+          <button
+            type="submit"
+            disabled={chatBusy}
+            className="h-11 min-w-[64px] rounded-full bg-espn px-4 font-display text-xs uppercase tracking-widest text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            Send
+          </button>
+        </form>
+      )}
     </div>
   );
 }

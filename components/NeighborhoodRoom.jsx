@@ -1205,6 +1205,10 @@ export default function NeighborhoodRoom({
       if (voiceRef.current !== v) return;
       setVoiceLive(true);
       applyTransmitNow();
+      // Seed the mesh's distance source immediately: its VAD
+      // tick keeps volumes fresh even while the tab is hidden
+      // and this component's rAF loop is frozen.
+      v.mesh.updateDistances(voiceDistFor);
     } catch (err) {
       if (voiceRef.current === v) voiceRef.current = null;
       setVoiceModeBoth("off");
@@ -1222,6 +1226,54 @@ export default function NeighborhoodRoom({
         });
       }
     }
+  }
+
+  // Distance from our avatar to a voice peer's, in world px,
+  // computed DETERMINISTICALLY from the stored paths and
+  // timestamps (the same math the renderer and server use) —
+  // not from the rAF-updated coordinates, which freeze in a
+  // hidden tab. A peer we cannot place yet (presence backstop
+  // hasn't caught up) counts as a middling 200px away, so they
+  // are audible rather than muted until their first move.
+  function voiceDistFor(id) {
+    const s = sRef.current;
+    const selfSeat = s.seatAnchors.get(s.selfId);
+    let sx;
+    let sy;
+    if (selfSeat) {
+      sx = selfSeat.x;
+      sy = selfSeat.y;
+    } else if (s.walk) {
+      const adv = advanceAlongPath(
+        s.walk.origin.x,
+        s.walk.origin.y,
+        s.walk.path,
+        (Date.now() - s.walk.startedAt) / 1000
+      );
+      sx = adv.x;
+      sy = adv.y;
+    } else {
+      sx = s.pos.x;
+      sy = s.pos.y;
+    }
+    const p = s.peers.get(id);
+    if (!p) return 200;
+    const at = s.seatAnchors.get(id);
+    if (at) return Math.hypot(at.x - sx, at.y - sy);
+    let px = p.curX;
+    let py = p.curY;
+    if (p.startedAt && p.path.length) {
+      const serverNow = Date.now() + s.clockOffset;
+      const adv = advanceAlongPath(
+        p.x,
+        p.y,
+        p.path,
+        (serverNow - p.startedAt) / 1000
+      );
+      px = adv.x;
+      py = adv.y;
+    }
+    return Math.hypot(px - sx, py - sy);
   }
 
   // track.enabled is the transmit gate: open mic is always on,
@@ -2440,20 +2492,7 @@ export default function NeighborhoodRoom({
       const vMesh = voiceRef.current && voiceRef.current.mesh;
       if (vMesh) {
         s.voiceFrame = (s.voiceFrame || 0) + 1;
-        if (s.voiceFrame % 3 === 0) {
-          const selfSeat = s.seatAnchors.get(s.selfId);
-          const vsx = selfSeat ? selfSeat.x : s.pos.x;
-          const vsy = selfSeat ? selfSeat.y : s.pos.y;
-          vMesh.updateDistances((id) => {
-            const p = s.peers.get(id);
-            if (!p) return Infinity;
-            const at = s.seatAnchors.get(id);
-            return Math.hypot(
-              (at ? at.x : p.curX) - vsx,
-              (at ? at.y : p.curY) - vsy
-            );
-          });
-        }
+        if (s.voiceFrame % 3 === 0) vMesh.updateDistances(voiceDistFor);
       }
 
       // camera: exponential ease toward the clamped follow spot

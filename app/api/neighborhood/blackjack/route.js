@@ -291,20 +291,30 @@ export async function POST(request) {
         for (const w of reaped.wallets) wallets.push(w);
       }
 
-      // 2. Run the clock forward to now.
-      const ticked = BJ.tick(state, now, rng);
-      state = ticked.state;
-      for (const w of ticked.wallets || []) wallets.push(w);
-
-      // 3. Re-seed mirrored balances from the wallet whenever
+      // 2. Re-seed mirrored balances from the wallet whenever
       //    money is not in play, so a top-up or a win banked
       //    elsewhere shows up at the table.
+      //
+      //    THIS MUST HAPPEN BEFORE tick(). The payout branch of
+      //    tick() credits winnings straight into the seat's
+      //    mirrored balance, and the wallet row does not learn
+      //    about them until persistWallets() runs at the bottom
+      //    of this request. Re-seeding AFTER the tick therefore
+      //    overwrote every credit with the stale pre-payout
+      //    number and then persisted that — players were
+      //    charged for their bets and never paid. Found in live
+      //    testing; the ordering is the whole fix.
       if (state.phase === "betting" || state.phase === "idle") {
         const seatedIds = (state.seats || []).filter(Boolean).map((s) => s.playerId);
         if (seatedIds.length) {
           state = BJ.syncBalances(state, await loadBalances(supabase, seatedIds));
         }
       }
+
+      // 3. Run the clock forward to now.
+      const ticked = BJ.tick(state, now, rng);
+      state = ticked.state;
+      for (const w of ticked.wallets || []) wallets.push(w);
 
       // 4. The action itself.
       let result = null;

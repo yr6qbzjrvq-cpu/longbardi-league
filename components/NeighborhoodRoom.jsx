@@ -129,6 +129,13 @@ const BJ_SYNC_MS = 2500;
 const CASINO_ROOMS = ["casino-floor", "casino-strip"];
 const BJ_TABLE_ROOM = "casino-floor";
 const CHIP_VALUES = [5, 25, 100];
+// Chat at the table (milestone 15). Seated players read the
+// SAME room chat as everyone else — these two numbers only
+// decide how much of it is echoed onto the felt before the
+// felt goes quiet again. Anything older lives in the Chat Log.
+const TABLE_CHAT_LINES = 4;
+const TABLE_CHAT_MS = 60_000;
+const TABLE_CHAT_FADE = [0.45, 0.62, 0.8, 1]; // oldest line dimmest
 
 // Speech bubbles are drawn in SCREEN pixels (not world units)
 // so chat stays readable at every phone zoom level.
@@ -723,6 +730,7 @@ export default function NeighborhoodRoom({
   soundOnRef.current = soundOn;
   const [, setClockTick] = useState(0); // re-render for relative stamps
   const chatBarRef = useRef(null);
+  const tableChatBarRef = useRef(null); // the same chat, sent from the table
   const logRef = useRef(null);
   const sRef = useRef(null);
 
@@ -2156,18 +2164,22 @@ export default function NeighborhoodRoom({
   // Mobile keyboards: lift the chat bar by exactly however much
   // the keyboard overlaps it (visualViewport), leaving the
   // canvas layout itself alone. The 16px input font prevents
-  // iOS zoom-on-focus.
+  // iOS zoom-on-focus. Both bars — the world one and the one
+  // on the blackjack felt — get the identical treatment; only
+  // one of them is ever mounted at a time.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const apply = () => {
-      const bar = chatBarRef.current;
-      if (!bar) return;
-      bar.style.transform = "none";
-      const rect = bar.getBoundingClientRect();
-      const keyboardTop = vv.offsetTop + vv.height;
-      const overlap = rect.bottom + 8 - keyboardTop;
-      if (overlap > 0) bar.style.transform = `translateY(${-overlap}px)`;
+      for (const ref of [chatBarRef, tableChatBarRef]) {
+        const bar = ref.current;
+        if (!bar) continue;
+        bar.style.transform = "none";
+        const rect = bar.getBoundingClientRect();
+        const keyboardTop = vv.offsetTop + vv.height;
+        const overlap = rect.bottom + 8 - keyboardTop;
+        if (overlap > 0) bar.style.transform = `translateY(${-overlap}px)`;
+      }
     };
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", apply);
@@ -2192,6 +2204,14 @@ export default function NeighborhoodRoom({
     const t = setInterval(() => setClockTick((n) => n + 1), 30_000);
     return () => clearInterval(t);
   }, [chatOpen]);
+
+  // At the table the chat lines age out on their own, so the
+  // felt is clean again a minute after the last word.
+  useEffect(() => {
+    if (!bjSeated || bjMin) return undefined;
+    const t = setInterval(() => setClockTick((n) => n + 1), 4000);
+    return () => clearInterval(t);
+  }, [bjSeated, bjMin]);
 
   // Walking into the casino: claim the $100 (first visit, or a
   // top-up if you busted out), then keep the table's clock
@@ -2395,6 +2415,16 @@ export default function NeighborhoodRoom({
     : null;
   const bjMineReady = !!(bjMineSeat && bjMineSeat.ready);
   const bjActs = actionsFor(bjTable, sRef.current.selfId, BJ);
+  // Sitting down does not leave the room, so the chat you read
+  // at the felt is the SAME room chat as the world view: same
+  // log, same send path, same rate limit and filter. This is
+  // only the last minute of it, echoed onto the empty felt.
+  const atTable = bjSeated && !bjMin;
+  const tableChat = atTable
+    ? log
+        .filter((e) => !e.failed && e.at && Date.now() - e.at < TABLE_CHAT_MS)
+        .slice(-TABLE_CHAT_LINES)
+    : [];
 
   return (
     <div
@@ -2603,7 +2633,11 @@ export default function NeighborhoodRoom({
           <div
             ref={logRef}
             aria-label="Chat log"
-            className="absolute right-2 top-2 z-10 max-h-[55%] w-[min(19rem,78%)] space-y-2 overflow-y-auto rounded-xl border border-gray-200 bg-white/95 p-2.5 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900/95"
+            className={`absolute w-[min(19rem,78%)] space-y-2 overflow-y-auto rounded-xl border border-gray-200 bg-white/95 p-2.5 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900/95 ${
+              atTable
+                ? "left-2 top-14 z-40 max-h-[46%]"
+                : "right-2 top-2 z-10 max-h-[55%]"
+            }`}
           >
             {log.length === 0 && (
               <p className="py-1 text-center text-xs text-gray-500 dark:text-gray-400">
@@ -2648,37 +2682,41 @@ export default function NeighborhoodRoom({
         {toast && (
           <div
             aria-live="polite"
-            className="pointer-events-none absolute inset-x-0 bottom-[4.25rem] flex justify-center px-4"
+            className={`pointer-events-none absolute inset-x-0 z-40 flex justify-center px-4 ${
+              atTable ? "bottom-[11rem]" : "bottom-[4.25rem]"
+            }`}
           >
             <p className="rounded-full bg-black/70 px-4 py-2 text-center text-sm font-medium text-white">
               {toast.text}
             </p>
           </div>
         )}
-        <form
-          ref={chatBarRef}
-          onSubmit={handleChatSubmit}
-          className="absolute inset-x-2 bottom-2 z-20 flex items-center gap-2"
-        >
-          <input
-            type="text"
-            value={chatDraft}
-            onChange={(e) => setChatDraft(e.target.value)}
-            maxLength={CHAT_MAX}
-            placeholder="Say something…"
-            enterKeyHint="send"
-            autoComplete="off"
-            aria-label="Chat message"
-            className="h-11 min-w-0 flex-1 rounded-full border border-gray-300 bg-white/95 px-4 text-[16px] text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-espn dark:border-gray-600 dark:bg-gray-900/95 dark:text-gray-100"
-          />
-          <button
-            type="submit"
-            disabled={chatBusy}
-            className="h-11 min-w-[64px] rounded-full bg-espn px-4 font-display text-xs uppercase tracking-widest text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+        {!atTable && (
+          <form
+            ref={chatBarRef}
+            onSubmit={handleChatSubmit}
+            className="absolute inset-x-2 bottom-2 z-20 flex items-center gap-2"
           >
-            Send
-          </button>
-        </form>
+            <input
+              type="text"
+              value={chatDraft}
+              onChange={(e) => setChatDraft(e.target.value)}
+              maxLength={CHAT_MAX}
+              placeholder="Say something…"
+              enterKeyHint="send"
+              autoComplete="off"
+              aria-label="Chat message"
+              className="h-11 min-w-0 flex-1 rounded-full border border-gray-300 bg-white/95 px-4 text-[16px] text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-espn dark:border-gray-600 dark:bg-gray-900/95 dark:text-gray-100"
+            />
+            <button
+              type="submit"
+              disabled={chatBusy}
+              className="h-11 min-w-[64px] rounded-full bg-espn px-4 font-display text-xs uppercase tracking-widest text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              Send
+            </button>
+          </form>
+        )}
         {bjSeated && bjMin && (
           <button
             type="button"
@@ -2709,6 +2747,74 @@ export default function NeighborhoodRoom({
               >
                 Watch Room
               </button>
+              {/* Chat at the table (milestone 15). The felt
+                  below the bet box is the one part of this
+                  screen the table art never draws on, so the
+                  room's chatter goes there: newest at the
+                  bottom, older lines dimmer, all of it gone a
+                  minute later. It takes no pointer events, and
+                  the bet/action buttons are a SEPARATE flex
+                  row below this box — chat can never cover
+                  them, at any height. */}
+              {tableChat.length > 0 && (
+                <div
+                  aria-live="polite"
+                  aria-label="Table chat"
+                  className="pointer-events-none absolute inset-x-2 bottom-[3.75rem] flex max-h-[42%] flex-col justify-end gap-1 overflow-hidden"
+                >
+                  {tableChat.map((entry, i) => (
+                    <p
+                      key={entry.id}
+                      style={{
+                        opacity:
+                          TABLE_CHAT_FADE[
+                            TABLE_CHAT_FADE.length - tableChat.length + i
+                          ] || 1,
+                      }}
+                      className="max-w-[94%] self-start break-words rounded-2xl bg-black/55 px-3 py-1 text-[13px] leading-snug text-white shadow-sm backdrop-blur-sm"
+                    >
+                      <span
+                        className={`font-semibold ${
+                          entry.playerId === sRef.current.selfId
+                            ? "text-yellow-300"
+                            : "text-emerald-200"
+                        }`}
+                      >
+                        {entry.username}
+                      </span>{" "}
+                      {entry.pending ? (
+                        <span className="opacity-70">{entry.text}</span>
+                      ) : (
+                        entry.text
+                      )}
+                    </p>
+                  ))}
+                </div>
+              )}
+              <form
+                ref={tableChatBarRef}
+                onSubmit={handleChatSubmit}
+                className="absolute inset-x-2 bottom-2 flex items-center gap-2"
+              >
+                <input
+                  type="text"
+                  value={chatDraft}
+                  onChange={(e) => setChatDraft(e.target.value)}
+                  maxLength={CHAT_MAX}
+                  placeholder="Say something to the table…"
+                  enterKeyHint="send"
+                  autoComplete="off"
+                  aria-label="Chat message"
+                  className="h-11 min-w-0 flex-1 rounded-full border border-white/25 bg-black/55 px-4 text-[16px] text-white shadow-sm outline-none backdrop-blur-sm placeholder:text-white/55 focus:border-yellow-400"
+                />
+                <button
+                  type="submit"
+                  disabled={chatBusy}
+                  className="h-11 min-w-[64px] rounded-full bg-yellow-400 px-4 font-display text-xs uppercase tracking-widest text-black shadow-sm transition-opacity hover:opacity-90 disabled:opacity-60"
+                >
+                  Send
+                </button>
+              </form>
             </div>
             <div className="flex flex-wrap items-center justify-center gap-2 border-t border-white/10 bg-black/60 p-2">
               {bjPhase === "betting" && !bjMineReady && (

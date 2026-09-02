@@ -856,6 +856,42 @@ only changes where it is drawn.
   Toasts (muted, rate limited, "keep it friendly") are lifted above the overlay
   too, or a seated player would never see why a message did not send.
 
+### Reading the cards (milestone 16)
+
+Austin, from a phone: *"Can you make the cards bigger? They are small and hard
+to read."* He was right, and the reason was backwards: every size in the table
+view came off `VW`, and `VW` is the axis a portrait phone clamps to its **floor**
+(`MIN_VW`, 430). A phone therefore got the *smallest* cards in the app, exactly
+where they are hardest to see, while a desktop got the largest.
+
+Card size now comes off `VH`, which is fixed at 600, so a phone and a desktop
+get the same proportions and the same read. Your own cards went from 46 wide to
+76-88, the dealer's from 38 to 58-68, and the other seats' from 26 to 32-40.
+
+- **The corner carries the read.** The top-left rank is the only part of an
+  overlapped card you can see, so it grew from `w * 0.27` to `w * 0.34` — a
+  ~26px rank on a phone where it used to be ~12px — and the centre pip shrank
+  and dimmed to stop competing with it.
+- **Hands fan to a width budget**, not to a fixed 42% overlap. `fanLayout`
+  opens the fan when there is room (`STEP_MAX`) and tightens it to `STEP_MIN`
+  (45%, the point where a two-character rank like "10" would start to be
+  clipped) *before* it shrinks any card. So a five-card hand keeps full-size
+  cards in a tighter fan, and only a sixth or seventh card makes them smaller.
+- **Split hands share one budget** with a ceiling. A second hand costs every
+  card a little size, a fourth costs a lot, and each hand's own fan tightens on
+  top of that. Four split hands deep into a shoe still land on the felt — just
+  small — instead of sliding off the edge of it, and the ceiling keeps them
+  from sitting on top of the other two seats.
+- **Three rows across the middle became one.** The status pill, the timer bar
+  under it and the seconds caption under *that* were eating the vertical space
+  the cards needed. The pill now says what is happening, carries the count and
+  drains as the turn does. Your own seat also drops its READY/LEAVING line —
+  you learn your own state from that pill and from the buttons under the felt.
+  Both rows went to the cards.
+
+Nothing here decides anything: this is the same draw-only module reading the
+same wire state, so a bigger card cannot mean a different card.
+
 ### The rooms
 
 Two ordinary registry entries, `casino-strip` and `casino-floor` — multiplayer,

@@ -2220,6 +2220,11 @@ export default function NeighborhoodRoom({
         const bar = ref.current;
         if (!bar) continue;
         bar.style.transform = "none";
+        // Lift only while typing IN this bar (keyboard up). On a
+        // page that scrolls, the bar can sit below the visual
+        // viewport with no keyboard at all — without this guard
+        // it would get "lifted" onto the canvas, covering doors.
+        if (!bar.contains(document.activeElement)) continue;
         const rect = bar.getBoundingClientRect();
         const keyboardTop = vv.offsetTop + vv.height;
         const overlap = rect.bottom + 8 - keyboardTop;
@@ -2229,11 +2234,15 @@ export default function NeighborhoodRoom({
     vv.addEventListener("resize", apply);
     vv.addEventListener("scroll", apply);
     window.addEventListener("scroll", apply, true);
+    window.addEventListener("focusin", apply);
+    window.addEventListener("focusout", apply);
     apply();
     return () => {
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
       window.removeEventListener("scroll", apply, true);
+      window.removeEventListener("focusin", apply);
+      window.removeEventListener("focusout", apply);
     };
   }, []);
 

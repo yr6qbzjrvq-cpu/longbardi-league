@@ -71,6 +71,7 @@ import {
   CASINO_TABLE_SEATS,
 } from "@/lib/neighborhood/rooms";
 import * as BJ from "@/lib/neighborhood/blackjack";
+import { roomMusic } from "@/lib/neighborhood/music";
 import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
 import dynamic from "next/dynamic";
 import { TEAMS } from "@/lib/leagueData";
@@ -118,6 +119,7 @@ const MIN_FIT_ZOOM = 0.4;
 const SIZE_FACTOR = { short: 0.86, medium: 1, tall: 1.14 }; // mirrors drawAvatar
 const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
 const LOG_LIMIT = 120; // chat log entries kept in memory
+const MUSIC_KEY = "hspn_neighborhood_music_v1"; // mute choice, per browser
 const FADE_SPEED = 4; // door-transition fade, full swings per second
 const LONG_PRESS_MS = 550; // hold the feed to go OS fullscreen
 // Milestone 14 — the casino. BJ_SYNC_MS is the pulse that
@@ -704,6 +706,11 @@ export default function NeighborhoodRoom({
   const [arcadeOpen, setArcadeOpen] = useState(false);
   const arcadeFnRef = useRef(null);
   arcadeFnRef.current = () => setArcadeOpen(true);
+  // ---- background music (milestone 18) ----
+  // On by default at a polite volume; the mute choice sticks
+  // per browser. The synth engine itself lives in
+  // lib/neighborhood/music.js and stays inert until a gesture.
+  const [musicOn, setMusicOn] = useState(true);
   // ---- tomatoes (milestone 13) ----
   // Armed = the NEXT tap is a throw instead of a walk. One
   // obvious state, one obvious cancel; nothing about
@@ -837,6 +844,42 @@ export default function NeighborhoodRoom({
     obs.observe(el, { attributes: true, attributeFilter: ["class"] });
     return () => obs.disconnect();
   }, []);
+
+  // ---- background music (milestone 18) ---------------------
+  // The ROOM picks the soundtrack (its registry `music` id —
+  // most rooms have none and are silent on purpose); the
+  // PLAYER picks whether music plays at all. Both funnel into
+  // the singleton engine, which crossfades between rooms and
+  // suspends the whole audio graph when nothing plays.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(MUSIC_KEY) === "off") setMusicOn(false);
+    } catch {
+      /* storage blocked — stay on the default */
+    }
+  }, []);
+  useEffect(() => {
+    roomMusic.setTrack(musicOn ? getRoom(roomId).music || null : null);
+  }, [roomId, musicOn]);
+  // The arcade overlay softens the room track without stopping it.
+  useEffect(() => {
+    roomMusic.setDucked(arcadeOpen);
+  }, [arcadeOpen]);
+  // Unmount = fade out and power the graph down.
+  useEffect(() => () => roomMusic.stop(), []);
+
+  function toggleMusic() {
+    roomMusic.unlock(); // this click IS the required gesture
+    setMusicOn((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem(MUSIC_KEY, next ? "on" : "off");
+      } catch {
+        /* fine — the toggle still works for this visit */
+      }
+      return next;
+    });
+  }
 
   // ---- big board / screen share (milestone 9) ---------------
 
@@ -2340,6 +2383,9 @@ export default function NeighborhoodRoom({
   }, [bjSeated, bjMin]);
 
   function handlePointerDown(e) {
+    // Browsers only allow audio after a user gesture — the
+    // very first walk tap doubles as the music power switch.
+    roomMusic.unlock();
     const canvas = canvasRef.current;
     const s = sRef.current;
     if (!canvas || !s.cam) return;
@@ -2573,6 +2619,40 @@ export default function NeighborhoodRoom({
             }`}
           >
             {chatOpen ? "Hide Log" : "Chat Log"}
+          </button>
+          <button
+            type="button"
+            onClick={toggleMusic}
+            aria-pressed={musicOn}
+            aria-label={musicOn ? "Mute background music" : "Turn on background music"}
+            title={musicOn ? "Mute the room music" : "Turn the room music on"}
+            className={`flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md border px-2.5 transition-colors ${
+              musicOn
+                ? "border-espn text-espn hover:bg-espn hover:text-white"
+                : "border-gray-300 text-gray-400 hover:border-espn hover:text-espn dark:border-gray-600 dark:text-gray-500"
+            }`}
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M11 5 6 9H2v6h4l5 4z" fill="currentColor" stroke="none" />
+              {musicOn ? (
+                <>
+                  <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                  <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+                </>
+              ) : (
+                <path d="m16 9 6 6m0-6-6 6" />
+              )}
+            </svg>
           </button>
           {canBroadcast && roomId === BROADCAST_ROOM_ID && (
             <>

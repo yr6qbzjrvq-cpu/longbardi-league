@@ -68,7 +68,10 @@ import {
   roomHasScreen,
   setScreenFeedState,
   BROADCAST_ROOM_ID,
+  CASINO_TABLE_SEATS,
 } from "@/lib/neighborhood/rooms";
+import * as BJ from "@/lib/neighborhood/blackjack";
+import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import { advanceAlongPath } from "@/lib/neighborhood/movement";
 import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
@@ -115,6 +118,17 @@ const MOVE_SEND_GAP_MS = 340; // client-side pacing under the ~3/s server limit
 const LOG_LIMIT = 120; // chat log entries kept in memory
 const FADE_SPEED = 4; // door-transition fade, full swings per second
 const LONG_PRESS_MS = 550; // hold the feed to go OS fullscreen
+// Milestone 14 — the casino. BJ_SYNC_MS is the pulse that
+// moves a table's clock: serverless functions cannot tick on
+// their own, so whoever is in the room asks the server to
+// advance any expired deadline. Cheap (one row read, a write
+// only when something actually changed) and self-healing —
+// the LAST player to leave the room still leaves a table whose
+// next visitor ticks it forward on arrival.
+const BJ_SYNC_MS = 2500;
+const CASINO_ROOMS = ["casino-floor", "casino-strip"];
+const BJ_TABLE_ROOM = "casino-floor";
+const CHIP_VALUES = [5, 25, 100];
 
 // Speech bubbles are drawn in SCREEN pixels (not world units)
 // so chat stays readable at every phone zoom level.
@@ -412,8 +426,18 @@ function drawScene(ctx, canvas, s, theme, t) {
   // Props, every peer and ourselves all sort in ONE list.
   const ents = [];
   for (const p of room.props) ents.push({ y: p.sortY ?? p.y, prop: p });
-  for (const peer of s.peers.values()) ents.push({ y: peer.curY, peer });
-  ents.push({ y: s.pos.y, player: true });
+  // Anyone sitting at the blackjack table is PAINTED in their
+  // chair rather than wherever their walk left them
+  // (milestone 14). The seat map is mirrored from the same
+  // broadcast state the felt is drawn from, so every client in
+  // the room sees the same three chairs filled by the same
+  // three people.
+  for (const peer of s.peers.values()) {
+    const at = s.seatAnchors.get(peer.id);
+    ents.push({ y: at ? at.y : peer.curY, peer, at });
+  }
+  const selfAt = s.seatAnchors.get(s.selfId);
+  ents.push({ y: selfAt ? selfAt.y : s.pos.y, player: true, at: selfAt });
   // Splats on the floor / a wall / a prop sort by where they
   // landed, exactly like scenery does: a splat low on the
   // screen is in front, one up on a wall is behind everybody.
@@ -431,20 +455,24 @@ function drawScene(ctx, canvas, s, theme, t) {
   };
   for (const e of ents) {
     if (e.player) {
-      drawAvatar(ctx, s.avatar, s.pos.x, s.pos.y, AVATAR_SCALE, {
-        walking: s.walking,
-        frame: s.walkT,
+      const px = e.at ? e.at.x : s.pos.x;
+      const py = e.at ? e.at.y : s.pos.y;
+      drawAvatar(ctx, s.avatar, px, py, AVATAR_SCALE, {
+        walking: e.at ? false : s.walking,
+        frame: e.at ? 0 : s.walkT,
       });
-      drawStuck(s.selfId, s.pos.x, s.pos.y);
-      drawNameTag(ctx, s.name, s.pos.x, tagYFor(s.avatar, s.pos.y), true);
+      drawStuck(s.selfId, px, py);
+      drawNameTag(ctx, s.name, px, tagYFor(s.avatar, py), true);
     } else if (e.peer) {
       const pr = e.peer;
-      drawAvatar(ctx, pr.avatar, pr.curX, pr.curY, AVATAR_SCALE, {
-        walking: pr.walking,
-        frame: pr.walkT,
+      const px = e.at ? e.at.x : pr.curX;
+      const py = e.at ? e.at.y : pr.curY;
+      drawAvatar(ctx, pr.avatar, px, py, AVATAR_SCALE, {
+        walking: e.at ? false : pr.walking,
+        frame: e.at ? 0 : pr.walkT,
       });
-      drawStuck(pr.id, pr.curX, pr.curY);
-      drawNameTag(ctx, pr.username, pr.curX, tagYFor(pr.avatar, pr.curY), false);
+      drawStuck(pr.id, px, py);
+      drawNameTag(ctx, pr.username, px, tagYFor(pr.avatar, py), false);
     } else if (e.splat) {
       const age = wallNowDraw - e.splat.at;
       drawSplat(ctx, e.splat.art, e.splat.x, e.splat.y, splatAlpha(age), splatScale(age));
@@ -652,6 +680,26 @@ export default function NeighborhoodRoom({
   const armedRef = useRef(false);
   armedRef.current = armed;
   const screenFxRef = useRef(null); // splat overlay, pinned over the <video>
+  // ---- casino (milestone 14) ----
+  // The table is never simulated here. `bjTable` is verbatim
+  // whatever the server last broadcast (cards, whose turn,
+  // everyone's money); the only local state is which chips you
+  // have stacked up but not yet committed.
+  const [bjTable, setBjTable] = useState(null);
+  const [bjBalance, setBjBalance] = useState(null);
+  const [bjSeated, setBjSeated] = useState(false);
+  const [bjMin, setBjMin] = useState(false); // seated, but watching the room
+  const [bjBusy, setBjBusy] = useState(false);
+  const [bjStake, setBjStake] = useState(0); // chips down, not yet committed
+  const bjCanvasRef = useRef(null);
+  const bjTableRef = useRef(null);
+  const bjBalanceRef = useRef(null);
+  const bjSeatedRef = useRef(false);
+  const bjCallRef = useRef(null);
+  const seatFnRef = useRef(null);
+  bjTableRef.current = bjTable;
+  bjBalanceRef.current = bjBalance;
+  bjSeatedRef.current = bjSeated;
   // ---- big board (milestone 9) ----
   const [roomId, setRoomId] = useState("town-square");
   const [feed, setFeed] = useState("standby"); // standby | connecting | live
@@ -728,6 +776,11 @@ export default function NeighborhoodRoom({
       // the rAF clock, for the reveal animations
       flags: {},
       flagTimes: {},
+      // blackjack (milestone 14): playerId -> the chair their
+      // avatar is painted in, mirrored from the broadcast
+      // table state. Empty in every room but the casino floor.
+      seatAnchors: new Map(),
+      pendingSeat: null,
       // doors (milestone 6)
       destroyed: false,
       connGen: 0, // bumps per connection; stale events are dropped
@@ -1176,6 +1229,14 @@ export default function NeighborhoodRoom({
         if (!live()) return;
         addThrow(ev, false);
       },
+      // The blackjack table changed (milestone 14). Only the
+      // blackjack route can publish this, so it is simply the
+      // truth: cards, chips and whose turn it is are replaced
+      // wholesale, never merged with a local guess.
+      onBlackjack: (wire) => {
+        if (!live()) return;
+        applyTable(wire);
+      },
       // Screen-share handshake (milestone 9) — hand every
       // rtc-* event to both peer roles; each ignores what
       // isn't addressed to it.
@@ -1371,6 +1432,12 @@ export default function NeighborhoodRoom({
       s.tomatoes = [];
       s.splats = [];
       s.lastThrowAt = 0;
+      // The table belongs to the casino floor. Leaving the room
+      // does NOT stand you up server-side — the seat is freed by
+      // the route the moment it notices you are gone — but the
+      // view and the chairs go away with the room.
+      s.seatAnchors = new Map();
+      s.pendingSeat = null;
       s.walk = null;
       s.walking = false;
       s.walkT = 0;
@@ -1460,6 +1527,72 @@ export default function NeighborhoodRoom({
     if (act.successToast) {
       setToast({ text: act.successToast, id: performance.now() });
     }
+  }
+
+  // ---- casino (milestone 14) -------------------------------
+
+  // One broadcast (or one route reply) becomes the whole view:
+  // the felt, the money badge, and which chairs the world view
+  // paints avatars in. Nothing is inferred locally.
+  function applyTable(wire) {
+    const s = sRef.current;
+    if (!wire) return;
+    setBjTable(wire);
+    const anchors = new Map();
+    (wire.seats || []).forEach((seat, i) => {
+      const cfg = CASINO_TABLE_SEATS[i];
+      if (seat && cfg) anchors.set(seat.playerId, cfg.anchor);
+    });
+    s.seatAnchors = anchors;
+    const mine = (wire.seats || []).find((x) => x && x.playerId === s.selfId);
+    setBjSeated((was) => {
+      if (mine && !was) setBjMin(false); // just sat down: open the table
+      return !!mine;
+    });
+    if (mine) setBjBalance(mine.balance);
+    // A finished betting window clears anything you stacked up
+    // but never committed.
+    if (wire.phase !== "betting") setBjStake(0);
+  }
+
+  // Ask the table for something. Errors are not exceptional —
+  // a stale button is the normal case — so a refusal repaints
+  // from the fresh state the server sent back with it.
+  async function bjCall(action, extra) {
+    const s = sRef.current;
+    if (!s.conn || !s.conn.blackjack) return null;
+    if (action !== "sync") setBjBusy(true);
+    try {
+      const res = await s.conn.blackjack(action, extra);
+      if (res && res.table) applyTable(res.table);
+      if (res && res.balance !== null && res.balance !== undefined) {
+        setBjBalance(res.balance);
+      }
+      return res;
+    } catch (err) {
+      if (err && err.data && err.data.table) applyTable(err.data.table);
+      if (err && err.data && err.data.balance !== null && err.data.balance !== undefined) {
+        setBjBalance(err.data.balance);
+      }
+      // Rate limits are the client pacing itself, not news.
+      if (err && err.code !== "rate_limited" && action !== "sync") {
+        setToast({ text: err.message, id: performance.now() });
+      }
+      return null;
+    } finally {
+      if (action !== "sync") setBjBusy(false);
+    }
+  }
+  bjCallRef.current = bjCall;
+  seatFnRef.current = (seatIndex) => bjCall("sit", { seatIndex });
+
+  // Chips go down locally, then Deal commits them in one go —
+  // so building a $55 bet is one request, not three, and the
+  // rate limit never gets in the way of a thumb.
+  async function bjDeal() {
+    if (bjStake < BJ.MIN_BET) return;
+    const placed = await bjCall("bet", { amount: bjStake });
+    if (placed && placed.ok !== false) await bjCall("ready");
   }
 
   // ---- tomatoes (milestone 13) -----------------------------
@@ -1819,6 +1952,15 @@ export default function NeighborhoodRoom({
           setToast({ text: `${exit.label} — opening soon!`, id: now });
         }
       }
+      // Arrived at a chair (milestone 14) — ask for the seat.
+      // Same "fires on the completion frame" reasoning as the
+      // door above: pendingSeat only exists while a walk to a
+      // chair is in flight.
+      if (!moving && s.pendingSeat !== null && s.pendingSeat !== undefined) {
+        const seatIndex = s.pendingSeat;
+        s.pendingSeat = null;
+        if (seatFnRef.current) seatFnRef.current(seatIndex);
+      }
       s.walking = moving;
 
       // door-transition fade eases toward its target
@@ -2051,6 +2193,78 @@ export default function NeighborhoodRoom({
     return () => clearInterval(t);
   }, [chatOpen]);
 
+  // Walking into the casino: claim the $100 (first visit, or a
+  // top-up if you busted out), then keep the table's clock
+  // moving. The interval is the ONLY reason a turn timer fires
+  // or a dealer draws — see BJ_SYNC_MS.
+  useEffect(() => {
+    if (!CASINO_ROOMS.includes(roomId)) {
+      setBjTable(null);
+      setBjBalance(null);
+      setBjSeated(false);
+      setBjMin(false);
+      setBjStake(0);
+      sRef.current.seatAnchors = new Map();
+      return undefined;
+    }
+    let stopped = false;
+    const beat = async () => {
+      if (stopped || !bjCallRef.current) return;
+      // Still no balance means the grant has not landed yet
+      // (a room hop can race the connection) — ask again. The
+      // sync straight after it is what advances any deadline
+      // the table was frozen on while the room stood empty.
+      if (bjBalanceRef.current === null) {
+        const got = await bjCallRef.current("enter");
+        if (stopped || !got) return;
+      }
+      if (!stopped && bjCallRef.current) bjCallRef.current("sync");
+    };
+    beat();
+    const t = setInterval(beat, BJ_SYNC_MS);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [roomId]);
+
+  // The first-person table. Its own canvas and its own loop:
+  // the world keeps running underneath (peers still walk, chat
+  // still arrives), this just draws on top of it.
+  useEffect(() => {
+    const open = bjSeated && !bjMin;
+    const canvas = bjCanvasRef.current;
+    if (!open || !canvas) return undefined;
+    let raf = 0;
+    const ctx = canvas.getContext("2d");
+    const draw = () => {
+      const box = canvas.parentElement;
+      if (box) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const w = box.clientWidth;
+        const h = box.clientHeight;
+        if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+          canvas.width = Math.round(w * dpr);
+          canvas.height = Math.round(h * dpr);
+          canvas.style.width = `${w}px`;
+          canvas.style.height = `${h}px`;
+        }
+        drawTableView(ctx, {
+          w,
+          h,
+          dpr,
+          theme: themeRef.current,
+          table: bjTableRef.current,
+          selfId: sRef.current.selfId,
+          now: Date.now() + sRef.current.clockOffset,
+        });
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [bjSeated, bjMin]);
+
   function handlePointerDown(e) {
     const canvas = canvasRef.current;
     const s = sRef.current;
@@ -2090,6 +2304,42 @@ export default function NeighborhoodRoom({
         s.flagTimes[act.flag] = performance.now() / 1000;
         if (act.toast) setToast({ text: act.toast, id: performance.now() });
       }
+      return;
+    }
+
+    // Chair tap? (milestone 14.) Walk to it, then ask the
+    // server for the seat on arrival. Whether the seat is free
+    // is the SERVER's answer — this check only saves a walk.
+    const chair = (s.room.seats || []).find(
+      (c) =>
+        wx >= c.hotspot.x &&
+        wx <= c.hotspot.x + c.hotspot.w &&
+        wy >= c.hotspot.y &&
+        wy <= c.hotspot.y + c.hotspot.h
+    );
+    if (chair) {
+      if (s.seatAnchors.has(s.selfId)) {
+        setBjMin(false); // already sitting — just reopen the table
+        return;
+      }
+      const wire = bjTableRef.current;
+      if (wire && (wire.seats || [])[chair.index]) {
+        setToast({ text: "That seat's taken.", id: performance.now() });
+        return;
+      }
+      const seatSpot = nearestWalkable(s.room, s.grid, chair.approach.x, chair.approach.y);
+      if (!seatSpot) return;
+      const seatPath = findPath(s.room, s.grid, s.pos.x, s.pos.y, seatSpot.x, seatSpot.y);
+      s.pendingExit = null;
+      if (seatPath.length === 0) {
+        s.pendingSeat = null;
+        if (seatFnRef.current) seatFnRef.current(chair.index);
+        return;
+      }
+      s.pendingSeat = chair.index;
+      s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path: seatPath, startedAt: Date.now() };
+      s.marker = { x: seatSpot.x, y: seatSpot.y, t: performance.now() };
+      if (s.conn) queueMoveSend(seatSpot.x, seatSpot.y);
       return;
     }
 
@@ -2135,6 +2385,17 @@ export default function NeighborhoodRoom({
     if (s.conn) queueMoveSend(spot.x, spot.y);
   }
 
+  // Derived once per render: the phase, whether our own bet is
+  // already locked in, and which action buttons are legal. The
+  // legality answers come from the ENGINE's own helpers, so a
+  // button can never offer a move the server would refuse.
+  const bjPhase = bjTable ? bjTable.phase : null;
+  const bjMineSeat = bjTable
+    ? (bjTable.seats || []).find((x) => x && x.playerId === sRef.current.selfId) || null
+    : null;
+  const bjMineReady = !!(bjMineSeat && bjMineSeat.ready);
+  const bjActs = actionsFor(bjTable, sRef.current.selfId, BJ);
+
   return (
     <div
       className="mx-auto max-w-5xl px-3 pt-3 sm:px-6"
@@ -2151,6 +2412,14 @@ export default function NeighborhoodRoom({
           {sharing && (
             <span className="rounded-full border border-red-400 bg-red-600 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-white">
               On Air{viewers && viewers.count ? ` · ${viewers.connected}/${viewers.count}` : ""}
+            </span>
+          )}
+          {CASINO_ROOMS.includes(roomId) && bjBalance !== null && (
+            <span
+              title="Play money. Nothing here is real currency."
+              className="rounded-full border border-emerald-500 bg-emerald-600 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-white"
+            >
+              ${bjBalance} chips
             </span>
           )}
           {preview && (
@@ -2410,6 +2679,122 @@ export default function NeighborhoodRoom({
             Send
           </button>
         </form>
+        {bjSeated && bjMin && (
+          <button
+            type="button"
+            onClick={() => setBjMin(false)}
+            className="absolute left-1/2 top-2 z-30 min-h-[44px] -translate-x-1/2 rounded-full border-2 border-yellow-400 bg-black/85 px-5 font-display text-xs uppercase tracking-widest text-yellow-300"
+          >
+            Back to the table
+          </button>
+        )}
+        {bjSeated && !bjMin && (
+          <div className="absolute inset-0 z-30 flex flex-col bg-[#06110c]">
+            <div className="relative min-h-0 flex-1">
+              <canvas ref={bjCanvasRef} className="block h-full w-full" aria-label="Blackjack table" />
+              <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-1">
+                <span className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-white">
+                  ${bjBalance === null ? "—" : bjBalance} chips
+                </span>
+                {bjStake > 0 && (
+                  <span className="rounded-full bg-yellow-400 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-black">
+                    Betting ${bjStake}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setBjMin(true)}
+                className="absolute right-2 top-2 min-h-[44px] rounded-md bg-white/15 px-3 font-display text-xs uppercase tracking-widest text-white backdrop-blur hover:bg-white/25"
+              >
+                Watch Room
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2 border-t border-white/10 bg-black/60 p-2">
+              {bjPhase === "betting" && !bjMineReady && (
+                <>
+                  {CHIP_VALUES.map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      disabled={bjBusy || bjStake + v > BJ.MAX_BET || (bjBalance !== null && bjStake + v > bjBalance)}
+                      onClick={() => setBjStake((n) => Math.min(BJ.MAX_BET, n + v))}
+                      className="min-h-[44px] min-w-[56px] rounded-full border-2 border-white/60 bg-white/10 px-3 font-display text-sm font-bold text-white disabled:opacity-35"
+                    >
+                      +${v}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    disabled={bjBusy || bjStake === 0}
+                    onClick={() => setBjStake(0)}
+                    className="min-h-[44px] rounded-md border border-white/40 px-3 font-display text-xs uppercase tracking-widest text-white disabled:opacity-35"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bjBusy || bjStake < BJ.MIN_BET}
+                    onClick={bjDeal}
+                    className="min-h-[44px] rounded-md bg-yellow-400 px-5 font-display text-sm uppercase tracking-widest text-black disabled:opacity-35"
+                  >
+                    Deal ${bjStake}
+                  </button>
+                </>
+              )}
+              {bjPhase === "playing" && bjActs.stand && (
+                <>
+                  <button
+                    type="button"
+                    disabled={bjBusy || !bjActs.hit}
+                    onClick={() => bjCall("hit")}
+                    className="min-h-[44px] min-w-[84px] rounded-md bg-emerald-500 px-4 font-display text-sm uppercase tracking-widest text-white disabled:opacity-35"
+                  >
+                    Hit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bjBusy}
+                    onClick={() => bjCall("stay")}
+                    className="min-h-[44px] min-w-[84px] rounded-md bg-red-600 px-4 font-display text-sm uppercase tracking-widest text-white disabled:opacity-35"
+                  >
+                    Stand
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bjBusy || !bjActs.double}
+                    onClick={() => bjCall("double")}
+                    className="min-h-[44px] rounded-md bg-blue-600 px-4 font-display text-xs uppercase tracking-widest text-white disabled:opacity-35"
+                  >
+                    Double
+                  </button>
+                  <button
+                    type="button"
+                    disabled={bjBusy || !bjActs.split}
+                    onClick={() => bjCall("split")}
+                    className="min-h-[44px] rounded-md bg-purple-600 px-4 font-display text-xs uppercase tracking-widest text-white disabled:opacity-35"
+                  >
+                    Split
+                  </button>
+                </>
+              )}
+              {!(bjPhase === "betting" && !bjMineReady) && !(bjPhase === "playing" && bjActs.stand) && (
+                <p className="px-2 py-1 text-center text-sm font-medium text-white/80">
+                  {statusLine(bjTable, sRef.current.selfId) || "Waiting…"}
+                </p>
+              )}
+              <button
+                type="button"
+                disabled={bjBusy}
+                onClick={() => bjCall("stand")}
+                title="Leave the table. A hand already dealt still plays out and still pays."
+                className="min-h-[44px] rounded-md border border-white/40 px-3 font-display text-xs uppercase tracking-widest text-white disabled:opacity-35"
+              >
+                Leave Table
+              </button>
+            </div>
+          </div>
+        )}
         {keypad && (
           <KeypadOverlay
             act={keypad}

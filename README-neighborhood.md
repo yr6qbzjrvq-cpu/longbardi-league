@@ -824,6 +824,37 @@ at the bottom and the other two players are to your left and right. Everyone
 else in the room keeps walking around, chatting and throwing tomatoes as
 normal, and sees your avatar sitting in the chair.
 
+### Chat at the table (milestone 15)
+
+Sitting down does not leave the room, so the chat at the felt is **the room
+chat** — not a second chat system. Same `POST /api/neighborhood/chat`, same
+sanitise/profanity/rate-limit/mute path, same broadcast, same log. Sitting down
+only changes where it is drawn.
+
+- The empty felt below the bet box is the one strip of the first-person view
+  the table art never draws on, so the last few lines land there: newest at the
+  bottom, older lines dimmer, and every line ages out after `TABLE_CHAT_MS`
+  (60s) so the felt goes quiet on its own. `pointer-events: none` — the lines
+  are never in the way of a tap.
+- A chat bar sits at the bottom of the felt, above the buttons. It shares
+  `chatDraft` / `handleChatSubmit` with the world bar (only one of the two is
+  ever mounted), so a message sent from the table is optimistic, gets the same
+  errors, and **pops as a speech bubble over your seated avatar** for everyone
+  still walking around the room — that falls out of reusing the send path, it
+  is not a second code path.
+- **Chat can never cover the bet or action buttons.** The felt and the button
+  row are two children of the same flex column: chat is absolutely positioned
+  inside the felt box, the buttons are in the row below it. There is no height
+  at which they meet. The lines are additionally capped at 42% of the felt and
+  clipped from the top.
+- The mobile keyboard lift is the same `visualViewport` handler as the world
+  bar — it now walks both refs, so whichever bar is mounted gets lifted by
+  exactly the overlap and nothing else moves.
+- **Chat Log** still opens the full history while seated; it moves to the left
+  and above the table overlay so it does not fight the Watch Room button.
+  Toasts (muted, rate limited, "keep it friendly") are lifted above the overlay
+  too, or a seated player would never see why a message did not send.
+
 ### The rooms
 
 Two ordinary registry entries, `casino-strip` and `casino-floor` — multiplayer,

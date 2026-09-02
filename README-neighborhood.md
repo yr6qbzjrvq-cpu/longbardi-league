@@ -835,7 +835,8 @@ only changes where it is drawn.
   the table art never draws on, so the last few lines land there: newest at the
   bottom, older lines dimmer, and every line ages out after `TABLE_CHAT_MS`
   (60s) so the felt goes quiet on its own. `pointer-events: none` — the lines
-  are never in the way of a tap.
+  are never in the way of a tap. Each line is clamped to two rows, so one
+  200-character message cannot blanket the felt.
 - A chat bar sits at the bottom of the felt, above the buttons. It shares
   `chatDraft` / `handleChatSubmit` with the world bar (only one of the two is
   ever mounted), so a message sent from the table is optimistic, gets the same

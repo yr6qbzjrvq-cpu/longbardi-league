@@ -73,6 +73,7 @@ import {
 import * as BJ from "@/lib/neighborhood/blackjack";
 import { roomMusic } from "@/lib/neighborhood/music";
 import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
+import { createDealAnimator } from "@/lib/neighborhood/dealAnim";
 import dynamic from "next/dynamic";
 import { TEAMS } from "@/lib/leagueData";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
@@ -782,6 +783,10 @@ export default function NeighborhoodRoom({
   const [bjBusy, setBjBusy] = useState(false);
   const [bjStake, setBjStake] = useState(0); // chips down, not yet committed
   const bjCanvasRef = useRef(null);
+  // The dealing choreography (m20): pure client-side theater
+  // between one broadcast and the next — see dealAnim.js.
+  const bjAnimRef = useRef(null);
+  if (bjAnimRef.current === null) bjAnimRef.current = createDealAnimator();
   const bjTableRef = useRef(null);
   const bjBalanceRef = useRef(null);
   const bjSeatedRef = useRef(false);
@@ -2004,6 +2009,10 @@ export default function NeighborhoodRoom({
   function applyTable(wire) {
     const s = sRef.current;
     if (!wire) return;
+    // The animator sees every state FIRST, so by the time the
+    // canvas paints this wire the card flights are scheduled.
+    // In a hidden tab it schedules nothing and just snaps.
+    bjAnimRef.current.update(wire, typeof document !== "undefined" && document.hidden);
     setBjTable(wire);
     const anchors = new Map();
     (wire.seats || []).forEach((seat, i) => {
@@ -2719,6 +2728,7 @@ export default function NeighborhoodRoom({
       setBjSeated(false);
       setBjMin(false);
       setBjStake(0);
+      bjAnimRef.current.update(null, true); // forget the felt with the room
       sRef.current.seatAnchors = new Map();
       return undefined;
     }
@@ -2772,6 +2782,9 @@ export default function NeighborhoodRoom({
           table: bjTableRef.current,
           selfId: sRef.current.selfId,
           now: Date.now() + sRef.current.clockOffset,
+          // null once every card has landed — the settled felt
+          // is always exactly the server's wire state.
+          anim: bjAnimRef.current.frame(),
         });
       }
       raf = requestAnimationFrame(draw);

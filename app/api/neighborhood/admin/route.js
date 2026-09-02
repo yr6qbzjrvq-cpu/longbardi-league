@@ -112,13 +112,24 @@ export async function POST(request) {
         .from(TABLE)
         .update({ muted })
         .eq("id", playerId)
-        .select("id, username, muted");
+        .select("id, username, muted, room");
       if (error) throw error;
       if (!data || data.length === 0) {
         return NextResponse.json(
           { error: "That player isn't in the neighborhood.", code: "not_found" },
           { status: 404 }
         );
+      }
+      // Milestone 19: mute covers the MICROPHONE too. The flag
+      // above is what makes the voice route refuse them a new
+      // grant; this broadcast is what drops them from any mesh
+      // they are already in. It rides the gameplay topic, which
+      // clients cannot publish on, so it cannot be forged.
+      if (data[0].room) {
+        await broadcastToRoom(data[0].room, "voice_mute", {
+          id: data[0].id,
+          muted,
+        });
       }
       return NextResponse.json({ ok: true, player: data[0] });
     }

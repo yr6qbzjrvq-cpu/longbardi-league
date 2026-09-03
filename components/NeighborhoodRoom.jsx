@@ -78,7 +78,7 @@ import { roomMusic } from "@/lib/neighborhood/music";
 import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
 import { createDealAnimator } from "@/lib/neighborhood/dealAnim";
 import dynamic from "next/dynamic";
-import { TEAMS } from "@/lib/leagueData";
+import { TEAMS, NEIGHBORHOOD_VOICE } from "@/lib/leagueData";
 import { findPath, getNavGrid, nearestWalkable } from "@/lib/neighborhood/pathing";
 import { advanceAlongPath } from "@/lib/neighborhood/movement";
 import { joinRoom, fetchChatHistory } from "@/lib/neighborhood/realtime";
@@ -1160,6 +1160,11 @@ export default function NeighborhoodRoom({
   // with the mic and AudioContext kept warm across the hop so
   // nothing re-prompts.
   async function attachVoice(conn, targetRoomId, opts) {
+    // Voice is switched off for now (lib/leagueData.js
+    // NEIGHBORHOOD_VOICE): no getUserMedia, no AudioContext, no
+    // mesh, no signaling. Everything below stays dormant until
+    // that flag flips back to true.
+    if (!NEIGHBORHOOD_VOICE) return;
     const silent = !!(opts && opts.silent);
     if (voiceModeRef.current === "off") {
       detachVoice(false);
@@ -1765,7 +1770,9 @@ export default function NeighborhoodRoom({
         // mic permission was revoked since, the attempt fails
         // silently and the button just reads OFF again.
         try {
-          const storedVoice = window.localStorage.getItem(VOICE_KEY);
+          const storedVoice = NEIGHBORHOOD_VOICE
+            ? window.localStorage.getItem(VOICE_KEY)
+            : null;
           if (
             (storedVoice === "open" || storedVoice === "ptt") &&
             voiceModeRef.current === "off"
@@ -3082,6 +3089,9 @@ export default function NeighborhoodRoom({
               )}
             </svg>
           </button>
+          {/* Voice chat is off for now — see NEIGHBORHOOD_VOICE
+              in lib/leagueData.js. The button comes back with it. */}
+          {NEIGHBORHOOD_VOICE && (
           <button
             type="button"
             onPointerDown={voiceButtonDown}
@@ -3143,6 +3153,7 @@ export default function NeighborhoodRoom({
               </span>
             )}
           </button>
+          )}
           {canBroadcast && roomId === BROADCAST_ROOM_ID && (
             <>
               <button

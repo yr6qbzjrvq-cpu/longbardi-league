@@ -568,10 +568,18 @@ wall art above the floor and the camera follows feet):
 3. **Restricted Corridor** (`dairy-scanner`) — LEVEL 3, hazard stripe at the
    base of the wall.
 4. **Maximum Security** (`dairy-vault`) — LEVEL 4, "CONTENTS: CLASSIFIED".
-5. **The Room** (`dairy-secret-room`) — 540 x 460. Four bare walls, one
-   hanging bulb on a cord that sways slightly, and **nothing else**. That
-   emptiness is the punchline and it is deliberate: Austin decides later what
-   belongs in here. Adding something is one more prop in that room's config.
+5. **The Room** (`dairy-secret-room`) — 540 x 540. A **white-cube gallery**:
+   white walls, white floor, one recessed ceiling fixture (the bare swinging
+   bulb is gone), and dead centre, on a white plinth inside a "keep back"
+   inlay ring, **a single gallon of milk** with an angled price card in front
+   of it reading **MILK $2.99**. Five locks and a bank vault, for that. The
+   room is drawn completely straight — the joke only works if the
+   presentation is sincere. Both the plinth and the card have footprints, so
+   you walk *around* the exhibit and sort in front of or behind it. Nothing in
+   the room is pure `#fff`: the floor sits a half-step under the wall, the
+   corner carries a contact-shadow gradient, and the light falls off toward
+   the edges, which is the only reason the space reads as a room at all. Dark
+   theme is the same white room with the lights down.
 
 Notes, in the spirit of the milestone 8 ones:
 

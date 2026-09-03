@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdminClient } from "@/lib/supabase";
 import { canSeeNeighborhood, sameOrigin } from "@/lib/neighborhoodAccess";
+import { NEIGHBORHOOD_VOICE } from "@/lib/leagueData";
 import { ROOMS } from "@/lib/neighborhood/rooms";
 import {
   TABLE,
@@ -83,6 +84,10 @@ function clientIp(request) {
 }
 
 export async function GET() {
+  // Voice is switched off (lib/leagueData.js NEIGHBORHOOD_VOICE).
+  if (!NEIGHBORHOOD_VOICE) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
   if (!(await canSeeNeighborhood())) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
@@ -96,6 +101,9 @@ export async function GET() {
 }
 
 export async function POST(request) {
+  if (!NEIGHBORHOOD_VOICE) {
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
   if (!(await canSeeNeighborhood())) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }

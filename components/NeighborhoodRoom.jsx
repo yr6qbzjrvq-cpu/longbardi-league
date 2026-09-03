@@ -35,7 +35,10 @@
 //     wall) and coded keypads (the hallway's blast door) —
 //     plus exits gated by the per-visit flags they set; the
 //     flags live in client state only, so every player
-//     discovers the chain for themselves
+//     discovers the chain for themselves. Milestone 21 reuses
+//     the whole mechanism unchanged for the Dairy chain behind
+//     the Grocery Store's cooler — five doors, each one more
+//     absurdly secure than the last
 //   • tomatoes (milestone 13): arm the Tomato button and the
 //     next tap is a THROW — at a player, at any spot in the
 //     room, or at a big screen. The client only ever sends a
@@ -588,13 +591,21 @@ function drawScene(ctx, canvas, s, theme, t) {
 // ACCESS DENIED and shake; the right one hands off to
 // onSuccess after a short green beat. Keys are 56px tall for
 // phone thumbs, and a hardware keyboard works too.
+//
+// Milestone 21 adds two optional keys for the Dairy chain's
+// gag door: `anyCode: true` accepts whatever you punch in (the
+// joke is a door that could not care less), and `codeLength`
+// sets how many slots it shows when there is no `code` to
+// measure. `grantedText` overrides the green line, so that
+// door can answer "CLOSE ENOUGH".
 function KeypadOverlay({ act, onSuccess, onClose }) {
   const [value, setValue] = useState("");
   const [denied, setDenied] = useState(false);
   const [granted, setGranted] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
   const timerRef = useRef(null);
-  const len = (act.code || "").length || 4;
+  const len = act.codeLength || (act.code || "").length || 4;
+  const anyCode = !!act.anyCode;
 
   useEffect(() => () => clearTimeout(timerRef.current), []);
 
@@ -603,7 +614,7 @@ function KeypadOverlay({ act, onSuccess, onClose }) {
     const next = value.length < len ? value + d : value;
     setValue(next);
     if (next.length === len && next !== value) {
-      if (next === act.code) {
+      if (anyCode || next === act.code) {
         setGranted(true);
         timerRef.current = setTimeout(onSuccess, 650);
       } else {
@@ -669,7 +680,7 @@ function KeypadOverlay({ act, onSuccess, onClose }) {
               }`}
             >
               {granted
-                ? "Access granted"
+                ? act.grantedText || "Access granted"
                 : denied
                   ? "Access denied"
                   : act.subtitle || "Enter access code"}

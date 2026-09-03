@@ -386,7 +386,9 @@ player: it only ever says yes or no about a grant the caller already holds.
   POST: ICE servers (Cloudflare TURN credentials when configured, STUN
   otherwise) for one active player standing in the room it asks for. Was
   screen-rooms-only until milestone 19; voice needs a relay in every room.
-- `POST /api/neighborhood/voice` — voice grants (milestone 19). Default
+- `POST /api/neighborhood/voice` — voice grants (milestone 19). **Returns 404
+  while `NEIGHBORHOOD_VOICE` is false in `lib/leagueData.js` — see "Proximity
+  voice chat".** Default
   action: mint a grant proving this player may speak here (active, unbanned,
   in-room, **not muted**), bound to a nonce a specific peer invented.
   `action: "verify"`: any player asks whether a grant it received is real.
@@ -405,11 +407,11 @@ Dashboard → **Neighborhood Mod** (`/admin/neighborhood`):
   them until the ban lapses, whatever their client does. Lift early with
   **Lift ban**.
 - **Mute**: flips the flag; the chat route answers the polite "you're muted"
-  toast, and — since milestone 19 — **voice goes with it**: the admin route
-  broadcasts `voice_mute` on the server-only gameplay topic, so the muted
-  player's mic drops out of every voice mesh immediately and the voice route
-  refuses them new grants until unmuted. Everything else (walking, doors)
-  still works.
+  toast. Everything else (walking, doors) still works. Since milestone 19
+  **voice goes with it** — the admin route broadcasts `voice_mute` on the
+  server-only gameplay topic, the muted player's mic drops out of every voice
+  mesh immediately and the voice route refuses them new grants until unmuted.
+  That half is dormant while voice is off; chat muting is unaffected.
 - **Recent messages** across all rooms, each with **Delete** — removal is
   broadcast so open chat logs and speech bubbles drop it live.
 
@@ -588,6 +590,11 @@ Notes, in the spirit of the milestone 8 ones:
   have opened stay open until you reload.
 - Discovery is **per-player** exactly like the Sports Bar chain: a second
   browser standing next to you sees a shut cooler and an intact padlock.
+- **The doors say nothing.** Tapping one plays its animation and that is the
+  whole reaction — no toast, no flavor line, same as the Sports Bar chain.
+  (The keypad overlay keeps its own on-screen text: that green
+  CLOSE ENOUGH ✓ ACCESS GRANTED line is part of the gag.) Functional toasts
+  are unaffected — "room is full", errors and the like still speak up.
 - **No `music` key on any of the five.** Everything past the Grocery Store is
   silent on purpose, and the door gags are visual only — the steam is puffs of
   canvas, not audio.
@@ -1254,7 +1261,18 @@ chain — is silent **on purpose**.
   stopping it. Blackjack shares the casino floor's track — there is no other
   audio in the casino to clash with.
 
-## Proximity voice chat (milestone 19)
+## Proximity voice chat (milestone 19) — CURRENTLY OFF
+
+> **Voice chat is switched off.** `NEIGHBORHOOD_VOICE` in `lib/leagueData.js`
+> is `false`, so: the mic button is not rendered, nothing ever calls
+> `getUserMedia` or opens an `AudioContext`, no `neighborhood-rtc` voice mesh
+> is built (a stored "voice on" preference is ignored), and
+> `/api/neighborhood/voice` answers **404** for both GET and POST. Every bit
+> of the code below is still in the repo and untouched — flipping that one
+> constant back to `true` turns all of it back on. The rest of this section
+> describes voice as it behaves when enabled. Nothing else shares this path:
+> the music engine (milestone 18), screen shares, and chat moderation are
+> separate.
 
 Opt-in voice for every room. Tap the mic button and everyone nearby with
 voice on hears you — at a volume that follows the map. Full voice inside

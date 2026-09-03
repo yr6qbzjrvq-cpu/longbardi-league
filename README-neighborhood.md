@@ -15,7 +15,8 @@ character and walk in. Moderation, and the ability to put a picture on the
 Mission Control big board — and, since milestone 12, on the Sports Bar's
 screen over the counter, which shows the same feed — stay commissioner-only.
 (And if someone in the Sports Bar winks at you: yes, the rumors are true — see
-"The secret room chain" below.)
+"The secret room chain" below. If they wink at you in the Grocery Store, that
+is a different rumor and it is also true — see "The Dairy chain".)
 
 ---
 
@@ -465,9 +466,9 @@ Then add to the Town Square's `exits` an entry with `roomId: "arcade"` (and an
 procedural vectors in the flat-fill + soft-outline house style; `walkable` and
 `footprint` describe FEET space (lower on screen = closer); spawn/arrive
 points must sit inside the walkable polygon (the join API validates entry
-points and falls back to spawn). Two optional keys power the secret chain
-(milestone 8): `interact[]` and `exits[].requiresFlag` — see the next
-section.
+points and falls back to spawn). Two optional keys power the secret chains:
+`interact[]` and `exits[].requiresFlag` — see "The secret room chain"
+(milestone 8) and "The Dairy chain" (milestone 21) below.
 
 One more optional key, **`fitRoom: true`** (it was called `fitHeight` until
 milestone 12). By default the camera picks a zoom that fits the room's WIDTH
@@ -540,6 +541,61 @@ How it's wired:
   security — anyone reading the bundle can find it, and the rooms are
   joinable by id through the API regardless. Don't gate anything real this
   way.
+
+## The Dairy chain (milestone 21)
+
+The Grocery Store hides a second chain — five rooms behind the milk. It reuses
+the milestone 8 machinery **exactly** (`interact[]`, `exits[].requiresFlag`,
+per-visit client flags); the only engine change was two optional keypad keys,
+below. The joke is escalation: each door is absurdly more secure than the one
+before it, and they are all guarding nothing.
+
+| # | Where | The door | What tapping it does | Flag |
+| --- | --- | --- | --- | --- |
+| 1 | Grocery Store | the **DAIRY cooler** on the back wall | shudders, then both glass doors (cartons and all) slide out of the frame; cold air rolls over the lip and there is a corridor where the stock room should be | `dairyCooler` |
+| 2 | Behind the Dairy | a door with an **enormous brass padlock** stamped MAX SECURE | the padlock strains, wobbles, stretches its shackle, gives up, drops to the floor and kicks up dust; the leaf swings open | `dairyPadlock` |
+| 3 | Sub-Dairy Access | a steel slab with a **number pad** | full-screen keypad — and it accepts **any four digits**. Green line reads "CLOSE ENOUGH ✓ ACCESS GRANTED"; the slab retracts up into the lintel | `dairyKeypad` |
+| 4 | Restricted Corridor | a **palm scanner** beside a two-leaf blast door | the pad glows, a cyan line sweeps it twice while the status reads ANALYZING…, then a green stamp slams down over the door: **PROBABLY FINE ✓**. Leaves part | `dairyScanner` |
+| 5 | Maximum Security | a **bank-vault wheel door** — hazard ring, rivets, five-spoke wheel | the wheel spins six and a half turns on an ease-out, three jamb vents puff steam, four bolts retract, the round slab swings open | `dairyVault` |
+
+Rooms, in order (all capacity 8, all `fitRoom: true` because the doors are
+wall art above the floor and the camera follows feet):
+
+1. **Behind the Dairy** (`dairy-tunnel`) — cold-store tile, frosty palette.
+2. **Sub-Dairy Access** (`dairy-keypad`) — concrete sublevel, LEVEL 2.
+3. **Restricted Corridor** (`dairy-scanner`) — LEVEL 3, hazard stripe at the
+   base of the wall.
+4. **Maximum Security** (`dairy-vault`) — LEVEL 4, "CONTENTS: CLASSIFIED".
+5. **The Room** (`dairy-secret-room`) — 540 x 460. Four bare walls, one
+   hanging bulb on a cord that sways slightly, and **nothing else**. That
+   emptiness is the punchline and it is deliberate: Austin decides later what
+   belongs in here. Adding something is one more prop in that room's config.
+
+Notes, in the spirit of the milestone 8 ones:
+
+- The four corridor segments are the **same 700 x 520 box** — `SEG_W`,
+  `SEG_WALL_Y`, `WAY_BACK`, `GATE`, `SEG_WALKABLE` and friends near the top of
+  the section — built by a small `segment()` helper. One background function
+  (`drawSecretCorridor`) paints all four off a `corridor` key (wall texture,
+  lamp positions, stencils, hazard floor). Only the door prop differs. Adding
+  a sixth level is a couple of dozen lines.
+- The dairy cooler **used to be painted into the Grocery Store's cached
+  background**. It is a prop now (`drawDairyCooler`): backgrounds are cached
+  offscreen and never get the frame clock, so anything that moves has to be a
+  prop. If you are ever adding motion to existing scenery, that is the move.
+- **Every exit back is ungated**, so you can walk the whole chain in reverse
+  out to the shop floor. Flags live in `s.flags` for the session, so doors you
+  have opened stay open until you reload.
+- Discovery is **per-player** exactly like the Sports Bar chain: a second
+  browser standing next to you sees a shut cooler and an intact padlock.
+- **No `music` key on any of the five.** Everything past the Grocery Store is
+  silent on purpose, and the door gags are visual only — the steam is puffs of
+  canvas, not audio.
+- Two new optional keypad keys (`KeypadOverlay` in
+  `components/NeighborhoodRoom.jsx`): **`anyCode: true`** grants on any full
+  entry, **`codeLength`** sets the slot count when there is no `code` to
+  measure, and **`grantedText`** overrides the green line. The milestone 8
+  blast door is untouched — it still wants 2723.
 
 ## Going public — what the flip actually changed (milestone 10)
 
@@ -1176,7 +1232,8 @@ Four rooms hum: the **Town Square** (gentle open-air pad + music box), the
 **Grocery Store** (mellow elevator vibraphone), the **Fast Food Place**
 (upbeat jingle bounce) and the **Casino floor** (light jazz shuffle — brushed
 ride, walking bass, EP comping). Every other room — Sports Bar, Restroom,
-Hidden Hallway, Mission Control, Casino Strip — is silent **on purpose**.
+Hidden Hallway, Mission Control, Casino Strip, and all five rooms of the Dairy
+chain — is silent **on purpose**.
 
 - Zero assets: every note is synthesized in `lib/neighborhood/music.js` with
   the Web Audio API (oscillators, filters, envelopes, one shared noise buffer

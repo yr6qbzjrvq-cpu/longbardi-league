@@ -1393,3 +1393,42 @@ trail**: mute and kick are live controls, not evidence collection.
   better to hear someone briefly at the wrong volume than not at all.
 - Per-pair grants cost a couple of fetches per join; fine at league scale,
   another thing an SFU would flatten.
+
+## The mural (milestone 23)
+
+The back wall of the **Casino** floor now has a painting on it: three wolves
+howling at an enormous full moon, in a thin gold frame, roughly 590×214 of the
+900-wide room. It is deliberately, aggressively out of style. Every other thing
+in this world is a flat vector shape with a slightly darker outline; the mural
+is airbrushed — stacked radial and linear gradients, a 260-star field with
+glare crosses on the bright ones, cloud banks that pick up the moonlight as
+they pass it, a lake with a broken reflection, ground fog, and several thousand
+individual strokes of fur. Nobody in the room acknowledges it.
+
+The joke only works if the rendering is genuinely harder than its
+surroundings, so the wolves are built the slow way. Each one is a bezier
+outline flattened to a dense polygon first, because the silhouette is what
+gives a vector shape away: every ~1.2 units of arc length along that polygon
+gets a hair planted pointing outward, so the coat ends up ragged instead of
+smooth. Inside the clip it is four passes — broad soft clumps for light and
+shade, the hair itself, the guard hairs the moon actually catches, and a rim
+light that is stroked *from inside* the clip so the edge glows rather than
+being outlined. The two on the ridge get a `haze` factor that pushes their
+darks and lights toward the sky colour, which is what distance looks like.
+
+**It costs nothing to run.** `drawWolfMural` is called only from
+`drawFloorBackground`, and room backgrounds are painted once per
+(theme, zoom) into an offscreen canvas by `ensureBg()` in the room engine and
+blitted from then on. The whole casino background, mural included, builds in
+roughly 20–30ms and is then free every frame. Everything in it is deterministic
+— a seeded mulberry32 RNG, no `t` — so a cache rebuild on a resize or a theme
+flip repaints the identical picture instead of reshuffling the stars.
+
+It is wall art and nothing else: it lives entirely above `FLOOR_WALL_Y`, it is
+not a prop, and it has no footprint. Depth sorting, pathing, the seats, the
+slots, the blackjack route and chat are all unaware of it. A tomato thrown at
+the mural still splats on the mural and fades, which is correct and funny.
+
+The only other change on that wall: the neon strip used to run its full width
+and now stops short of the frame with a rounded end, so the painting is not
+sitting on top of a cut-off tube light.

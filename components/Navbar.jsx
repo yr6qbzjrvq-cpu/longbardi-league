@@ -17,7 +17,7 @@ const LINKS = [
   { href: "/chat", label: "Chat" },
   // Hidden until HSPNeighborhood is opened up to the league.
   ...(NEIGHBORHOOD_PUBLIC
-    ? [{ href: "/neighborhood", label: "Neighborhood" }]
+    ? [{ href: "/neighborhood", label: "HSPNeighborhood" }]
     : []),
 ];
 
@@ -68,7 +68,7 @@ export default function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex items-center border-b-[3px] px-3 font-display text-sm uppercase tracking-widest transition-colors ${
+                className={`flex items-center border-b-[3px] px-2 lg:px-3 font-display text-sm uppercase tracking-widest transition-colors ${
                   active
                     ? "border-espn text-white"
                     : "border-transparent text-gray-300 hover:text-white"

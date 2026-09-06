@@ -4,8 +4,8 @@ A Club Penguin-style browser world for the league, living at `/neighborhood`
 on the HSPN site (longbardi-league.vercel.app, a.k.a. hspn.vercel.app). Make a
 character, walk the Town Square, step through doors into the Grocery Store, the
 Fast Food Place and the Sports Bar, follow the blinking arrow east to the
-**casino** and play real multiplayer blackjack, chat with whoever's around, and
-throw tomatoes at any of it — realtime multiplayer, original procedural art
+**casino** and play real multiplayer blackjack, put $25 on a horse at HSPN
+Downs, chat with whoever's around, and throw tomatoes at any of it — realtime multiplayer, original procedural art
 (every pixel drawn in canvas code, no image assets), phone-friendly.
 
 Built across milestones 1–19; this file is the operator's manual. **It is live
@@ -41,6 +41,9 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Blackjack rules engine (pure, testable) | `lib/neighborhood/blackjack.js` |
 | First-person table art + card/chip drawing | `lib/neighborhood/casinoTable.js` |
 | Blackjack rules harness (`node scripts/test-blackjack.mjs`) | `scripts/test-blackjack.mjs` |
+| Horse-race engine (pure: schedule, race sim, payouts) | `lib/neighborhood/horses.js` |
+| Racetrack art (grandstand, turf, galloping horses) | `lib/neighborhood/horseTrack.js` |
+| Horse-race harness (`node scripts/test-horses.mjs`) | `scripts/test-horses.mjs` |
 | Chat text rules (sanitize, cap, filter) | `lib/neighborhood/chat.js` |
 | Server helpers + Realtime broadcast | `lib/neighborhood/multiplayerServer.js` |
 | Client realtime transport | `lib/neighborhood/realtime.js` |
@@ -51,8 +54,10 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Channel RLS policies (run once) | `supabase/neighborhood_realtime_auth.sql` |
 | Tomato rate limit + column (run once) | `supabase/neighborhood_tomatoes.sql` |
 | Casino wallets + blackjack tables (run once) | `supabase/neighborhood_casino.sql` |
+| Horse races + wallet delta + rate limit (run once) | `supabase/neighborhood_horses.sql` |
 | Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,throw,token}/route.js` |
 | Blackjack API (seats, bets, cards, money) | `app/api/neighborhood/blackjack/route.js` |
+| Horse-race API (the clock, bets, payouts) | `app/api/neighborhood/horses/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
 | ICE / TURN credentials (any active player, any room) | `app/api/neighborhood/ice/route.js` |
@@ -167,6 +172,18 @@ rows updated, re-reads and retries (four attempts, then a 503 the client
 retries on its next sync). No advisory locks and no transaction held open
 across a request.
 
+### Table `neighborhood_horse_races` (milestone 24)
+
+One row per track; today there is exactly one, `casino-floor:track`. Columns:
+`id` (PK), `state` (jsonb — the whole meeting: which race we are on, its seed,
+its winner, who has bet what), `version` (bigint), `updated_at`. RLS on, zero
+policies.
+
+`version` is the same optimistic lock `neighborhood_blackjack` uses, and here it
+is doing something specific: of the several lambdas that may notice a race is
+over at the same instant, exactly **one** wins the write and therefore exactly
+one settles it. That is what stops a winner being paid twice.
+
 ### SQL functions (Database → Functions in the Supabase dashboard)
 
 All three are `plpgsql`, `SECURITY DEFINER`, `SET search_path TO 'public'`, and
@@ -195,6 +212,17 @@ cap. All return `'ok'`, `'rate_limited'` or `'not_joined'`.
   below `p_floor`. Two tabs entering at once therefore cannot double-grant.
   Returns the balance. Execute is granted to `service_role` only. Source for
   both: `supabase/neighborhood_casino.sql`.
+- `neighborhood_wallet_delta(p_id text, p_delta integer)` — one atomic
+  movement of a wallet, up or down, used by the racetrack for both the stake
+  and the payout. The "can you afford it" test is the `where` clause
+  (`balance + p_delta >= 0`), not a prior read, so two tabs cannot spend the
+  same $10 twice and a balance can never go negative. Returns the new balance,
+  or NULL when the wallet does not exist or the money is not there.
+- `neighborhood_record_horse(p_id text, p_now_ms bigint)` — sliding-window
+  rate limit on `horse_times`, 3000ms window, cap 4. Anti-spam only; the
+  one-bet-per-player-per-race rule in the engine is the real limit. Source for
+  both: `supabase/neighborhood_horses.sql`. Execute is granted to
+  `service_role` only.
 
 ### Realtime channels
 
@@ -366,6 +394,11 @@ player: it only ever says yes or no about a grant the caller already holds.
   `enter` (claim the $100), `sync` (advance the clock), `sit`, `stand`, `bet`,
   `ready`, `hit`, `stay`, `double`, `split`. Clients send an INTENT, never an
   outcome and never a card. See "The casino" below.
+- `POST /api/neighborhood/horses` — HSPN Downs. Two actions: `sync` (advance
+  the meeting's clock; free, because every client in the casino calls it) and
+  `bet` (one horse, one stake, once per race). Clients send an INTENT, never a
+  result, and the winner is not in the payload until the gate has opened. See
+  "HSPN Downs" below.
 - `POST /api/neighborhood/heartbeat` — bumps `last_seen` (never for banned
   rows).
 - `POST /api/neighborhood/leave` — deletes the row + broadcasts (spares
@@ -1180,8 +1213,172 @@ Decisions worth writing down:
   entry in `lib/neighborhood/rooms.js`; the interaction, the overlay and the
   exit control live in `components/NeighborhoodRoom.jsx`.
 
+## HSPN Downs (milestone 24)
+
+There is a **betting window** on the casino floor now, standing on the carpet to
+the left of the blackjack table: a teller cage under a tote board with four
+colours, four names, `4:1` down the side and a line at the bottom counting the
+next race down. Tap it, your avatar walks over, and the **track** opens
+full-screen over the world — grandstand, turf, starting gate, finish post, and
+four horses that gallop, surge, fade and change the lead on the way to the wire.
+
+Everyone in the room is watching the **same race**. There is no lobby and no
+"start" button: races run on a loop whether anybody is looking or not, and you
+either got your money down before the gate opened or you did not.
+
+### The four horses
+
+| # | Horse | Colour |
+| --- | --- | --- |
+| 1 | Waiver Wire | red |
+| 2 | Loose Slots | gold |
+| 3 | Deep Threat | green |
+| 4 | Three Wolf Moon | purple |
+
+All four are furniture from elsewhere in this world: the waiver wire, the
+casino marquee's own boast (`BLACKJACK · LOOSE SLOTS · NO CLOCKS`), the arcade
+cabinet in the Fast Food Place, and the painting hanging about three feet from
+where you are standing.
+
+### The cadence
+
+**55 seconds a lap**, forever: **30s betting → 18s racing → 7s results → the
+next betting window.** The countdown is on the board in the room as well as in
+the overlay, so you can see from the carpet whether it is worth walking over.
+
+The clock is **pulled, not pushed**, exactly like the blackjack table and for
+exactly the same reason — Vercel functions do not run between requests. Every
+client standing in a casino room posts `sync` on a timer (every 5s from the
+floor, every 2s while the track view is open) and `HR.tick()` advances the
+meeting by comparing `now` to the deadline stored in the state. `tick()` is
+idempotent and deadline-driven, so it does not matter who calls it or how often.
+
+A room that stood empty for ten minutes does **not** replay ten minutes of
+racing: the catch-up loop is capped at six phases and anything still behind
+after that is simply a fresh betting window opened at `now`. The first pass
+through that loop is the one that matters — it settles the race real people had
+money on.
+
+### Paying 4 to 1
+
+**A winning bet returns 4× the stake.** Back a winner with $10 and $40 lands in
+your wallet; the $10 came out of it when you bet, so you are **up $30**. A
+losing bet costs you the stake and nothing else.
+
+That is the reading of "pays 4:1" this is built on, and it is worth being
+explicit because the phrase is ambiguous. A racetrack quoting 4/1 means *profit*
+of 4× plus your stake back — a 5× total return. With four equally likely horses
+that would be a bettor's edge, not a house's. **Total return = 4× stake** is the
+exactly fair book on a four-horse field: expected value is zero and the house
+takes no cut. If Austin wants the flashier version later, `PAYOUT_MULT` in
+`lib/neighborhood/horses.js` is one number.
+
+- Stakes are **$5–$100**, whole dollars, chips of 5/25/100 — the same chips as
+  the blackjack table.
+- **One bet per player per race.** It keeps the board readable, keeps the
+  payout maths to one line, and makes "am I in?" a yes or a no.
+- **Same wallet as blackjack.** `neighborhood_wallets` is one bankroll for the
+  whole casino: win $75 at the track and you can sit down and bet it on a hand.
+  Walking into either casino room still grants **$100 on a first visit** and
+  tops a busted player back up to $100, so the track cannot be lost at either.
+- The stake is debited the instant the bet lands and the payout is credited at
+  the wire — both as single atomic SQL updates (`neighborhood_wallet_delta`),
+  never a read-then-write, so a horse bet and a blackjack bet racing each other
+  in two tabs cannot spend the same chips.
+
+### What stops a forged race
+
+The same thing that stops a forged hand, plus one ordering rule.
+
+- Clients **cannot publish on the gameplay Realtime topic** (RLS on
+  `realtime.messages`), so a `horses` broadcast can only have come from the
+  route, which holds the service-role key. `neighborhood_horse_races` is RLS-on
+  with zero policies, so the anon key cannot read a seed or write a result
+  either, and both new SQL functions are `SECURITY DEFINER` with their PUBLIC
+  execute grant revoked.
+- **The winner is drawn before anybody bets.** It is chosen uniformly at random
+  from the four horses at the moment the betting window *opens*, off the same
+  crypto source the blackjack shoe is shuffled from. The result therefore cannot
+  depend on what the room puts its money on, because it already existed.
+- **And it is not in the payload until it cannot be acted on.** `HR.toWire()`
+  strips `winner` *and* `seed` for the whole betting window and hands both over
+  the instant the gate opens — the hole-card rule from the blackjack felt,
+  applied to a racetrack. A test asserts the betting-window wire JSON does not
+  contain the seed.
+- Every rule the buttons enforce, the route re-checks: the phase, the deadline,
+  the one-bet rule, the $5–$100 range, the horse number, your balance. A
+  hand-crafted request gets a 409 and a fresh copy of the true board.
+
+### The race you watch is theatre — deterministic theatre
+
+The server decides *who wins*. It does not decide, or store, a stride-by-stride
+race. The gallop is rebuilt in the browser from `(seed, winner)` by
+`buildRace()` in `lib/neighborhood/horses.js` — **the same pure module the route
+settles with**, so what you watch and what you are paid cannot disagree.
+
+- Four speed profiles are generated from the seed. Each has a `base` (how good
+  the horse is, kept in a narrow band so the field finishes together), a
+  running `style` from front-runner to closer (a tilt that is symmetric about
+  halfway, so it moves a horse around the pack **without** deciding the race),
+  and per-segment `noise` — which is where a two-length lead appears out of
+  nowhere and then evaporates.
+- The profile that reaches the wire first is then **swapped into the winner's
+  lane**. So the drama is genuinely random and first place is whatever the
+  server already decided. Across 1,600 simulated races the designated winner
+  won every one; the lead changed hands in ~64% of them, ~20% were decided by
+  less than three tenths of a second, and in ~35% the winner was not even in
+  front at halfway.
+- **There is no `Math.sin` in `horses.js`, on purpose.** Every viewer has to
+  compute bit-identical positions or two people would watch different races.
+  `+`, `-`, `*`, `/` and `Math.floor` are correctly rounded by the ECMAScript
+  spec on every engine; `Math.sin`, `Math.pow` and friends are not. So the speed
+  curves are arithmetic and linear interpolation only, and the seeded RNG is
+  integer math. (`horseTrack.js` uses trig freely — a leg swing that differs in
+  the last bit is not a different race.)
+- **Past the post they all pull up at the same rate.** Left on their own curves
+  a closer that finished second would keep accelerating and sail past the winner
+  ten strides after the line, which looks exactly like the wrong horse won. The
+  results phase then holds the **photo**: the frame at the instant the winner hit
+  the wire.
+- A hidden tab computes position from `Date.now()`, so a tab that was in the
+  background wakes up already at the right point of the race, or already at the
+  result.
+
+`node scripts/test-horses.mjs` covers all of it — 63 assertions, including the
+payout arithmetic with real numbers, the one-bet rule, the betting window
+closing, `tick()` idempotency (a second tick at the same instant pays nobody
+twice), and the wire hiding the winner.
+
+### The room, the overlay, and who can see what
+
+- The betting window is an ordinary registry prop with one new config key,
+  `track` (a hotspot and an approach point) — handled by the room engine the
+  same way `arcade` is: tap → walk → open on the arrival frame. Escape or
+  "✕ Back to the Floor" closes it.
+- **Nothing pauses underneath.** The room connection and the 30-second
+  heartbeats keep running, so a long session at the window never gets you
+  pruned; everyone else just sees your avatar standing at the counter.
+- **Spectating is the default.** You do not have to bet to watch, and the
+  overlay works fine with an empty wallet — you just cannot press the button.
+- **Bets are public.** Everyone at the window sees who is on what, which is
+  most of the fun of four people watching the same race.
+- A late joiner who opens the overlay mid-race sees the race **in progress at
+  the right point**, because position is a pure function of the seed and the
+  elapsed time, not of when you started watching.
+
 ## Known limitations
 
+- **A settled race is paid outside the transaction that settled it.** The route
+  wins the version guard, writes the result, and *then* credits the winners. A
+  lambda that died in that gap would leave a race marked settled and a payout
+  unmade. The same exposure exists on the blackjack table (`persistWallets()`
+  runs after the write) and the same reasoning applies: the alternative is a
+  transaction held open across a request, which is what the optimistic lock
+  exists to avoid. Nobody is ever paid *twice*, which is the failure that would
+  matter.
+- **HSPN Downs has no history.** Only the last race is kept, in the meeting
+  state; there is no table of results and no "biggest win ever" board. Same
+  call as tomatoes: a race is a 55-second event, not world state.
 - **A tomato leaves no trail.** Chat has `neighborhood_messages` behind it;
   throws have nothing. Good for the database, but it means "who splatted me?"
   is only answerable by whoever was looking. See "Moderation" above for the

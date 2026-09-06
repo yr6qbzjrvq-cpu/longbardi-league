@@ -3878,7 +3878,7 @@ export default function NeighborhoodRoom({
           <div className="absolute inset-0 z-30 flex flex-col bg-[#123024] text-gray-100 dark:bg-[#08160f]">
             <div className="flex items-center justify-between gap-2 border-b-2 border-[#f2c81b] bg-[#0d2419] px-3 py-2 dark:bg-[#061109]">
               <div className="flex min-w-0 items-center gap-2">
-                <p className="truncate font-display text-base font-semibold uppercase tracking-widest text-[#f2c81b]">
+                <p className="truncate font-display text-sm font-semibold uppercase tracking-widest text-[#f2c81b] sm:text-base">
                   HSPN Downs
                 </p>
                 <span className="shrink-0 rounded-full bg-[#3fae5f] px-2 py-0.5 font-display text-[11px] font-semibold uppercase tracking-widest text-white">

@@ -76,6 +76,8 @@ import {
 import * as BJ from "@/lib/neighborhood/blackjack";
 import { roomMusic } from "@/lib/neighborhood/music";
 import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
+import * as HR from "@/lib/neighborhood/horses";
+import { drawTrackView, trackStatus } from "@/lib/neighborhood/horseTrack";
 import { createDealAnimator } from "@/lib/neighborhood/dealAnim";
 import dynamic from "next/dynamic";
 import { TEAMS, NEIGHBORHOOD_VOICE } from "@/lib/leagueData";
@@ -145,6 +147,13 @@ const BJ_SYNC_MS = 2500;
 const CASINO_ROOMS = ["casino-floor", "casino-strip"];
 const BJ_TABLE_ROOM = "casino-floor";
 const CHIP_VALUES = [5, 25, 100];
+// Milestone 24 — HSPN Downs. Same pulled clock as blackjack and
+// for the same reason, but two cadences: a slow one that just
+// keeps the meeting's deadlines moving (and the tote board in
+// the world counting down) for anyone standing in a casino
+// room, and a faster one while the track view is actually open.
+const HORSE_SYNC_ROOM_MS = 5000;
+const HORSE_SYNC_OPEN_MS = 2000;
 // Chat at the table (milestone 15). Seated players read the
 // SAME room chat as everyone else — these two numbers only
 // decide how much of it is echoed onto the felt before the
@@ -403,6 +412,15 @@ function drawSpeechBubbles(ctx, s) {
 }
 
 // "just now" / "2m ago" stamps for the chat log.
+// Your own bet on the race currently on the board, or null.
+// Both the track view and the buttons under it read it, and
+// neither is allowed to remember one locally — one bet per
+// player per race is the SERVER's rule.
+function myRaceBet(wire, selfId) {
+  if (!wire || !selfId) return null;
+  return (wire.bets || []).find((b) => b && b.playerId === selfId) || null;
+}
+
 function relTime(at) {
   const secs = Math.max(0, Math.round((Date.now() - (at || 0)) / 1000));
   if (secs < 45) return "just now";
@@ -485,8 +503,12 @@ function drawScene(ctx, canvas, s, theme, t) {
     }
   }
 
-  // secret-chain state handed to prop draw fns (milestone 8)
-  const fx = { flags: s.flags, times: s.flagTimes };
+  // secret-chain state handed to prop draw fns (milestone 8).
+  // Milestone 24 adds `race`: the one piece of LIVE state any
+  // prop reads, so the tote board on the betting window can
+  // count the next race down from the same broadcast the track
+  // view draws from.
+  const fx = { flags: s.flags, times: s.flagTimes, race: s.raceHud };
 
   // Y-depth sort: lower feet = closer to camera = drawn later.
   // Props, every peer and ourselves all sort in ONE list.
@@ -806,6 +828,31 @@ export default function NeighborhoodRoom({
   bjTableRef.current = bjTable;
   bjBalanceRef.current = bjBalance;
   bjSeatedRef.current = bjSeated;
+  // ---- the horse race (milestone 24) ----
+  // Nothing about a race is simulated here either. `raceWire`
+  // is verbatim what the server last broadcast; the gallop is
+  // rebuilt from its (seed, winner) by the SAME pure module the
+  // route settled with, so what you watch and what you are paid
+  // cannot disagree. The only local state is which horse you
+  // have tapped and how many chips you have stacked up but not
+  // yet sent.
+  const [raceWire, setRaceWire] = useState(null);
+  const [raceOpen, setRaceOpen] = useState(false);
+  const [raceBusy, setRaceBusy] = useState(false);
+  const [racePick, setRacePick] = useState(null);
+  const [raceStake, setRaceStake] = useState(0);
+  const [, setRaceTick] = useState(0); // 2Hz, so the countdown ticks
+  const raceCanvasRef = useRef(null);
+  const raceWireRef = useRef(null);
+  const raceOpenRef = useRef(false);
+  const raceCallRef = useRef(null);
+  const raceOpenFnRef = useRef(null);
+  // buildRace() is cheap but not free, and it is the same
+  // answer for the whole race — so it is memoised on the id.
+  const raceSimRef = useRef({ key: null, race: null });
+  raceWireRef.current = raceWire;
+  raceOpenRef.current = raceOpen;
+  raceOpenFnRef.current = () => setRaceOpen(true);
   // ---- big board (milestone 9) ----
   const [roomId, setRoomId] = useState("town-square");
   const [feed, setFeed] = useState("standby"); // standby | connecting | live
@@ -895,6 +942,11 @@ export default function NeighborhoodRoom({
       pendingSeat: null,
       // arcade (milestone 17): true while walking to the cabinet
       pendingArcade: false,
+      // HSPN Downs (milestone 24): true while walking to the
+      // betting window, plus the one line of live race state the
+      // tote board in the world draws with
+      pendingTrack: false,
+      raceHud: null,
       // doors (milestone 6)
       destroyed: false,
       connGen: 0, // bumps per connection; stale events are dropped
@@ -933,10 +985,11 @@ export default function NeighborhoodRoom({
   useEffect(() => {
     roomMusic.setTrack(musicOn ? getRoom(roomId).music || null : null);
   }, [roomId, musicOn]);
-  // The arcade overlay softens the room track without stopping it.
+  // The arcade and the racetrack soften the room track without
+  // stopping it.
   useEffect(() => {
-    roomMusic.setDucked(arcadeOpen);
-  }, [arcadeOpen]);
+    roomMusic.setDucked(arcadeOpen || raceOpen);
+  }, [arcadeOpen, raceOpen]);
   // Unmount = fade out and power the graph down.
   useEffect(() => () => roomMusic.stop(), []);
 
@@ -1681,6 +1734,15 @@ export default function NeighborhoodRoom({
         if (!live()) return;
         applyTable(wire);
       },
+      // A race moved (milestone 24). Same trust story: only the
+      // horses route can publish this, so the gate opening, the
+      // result and the payouts are simply the truth. During the
+      // betting window the payload carries no winner and no
+      // seed — there is nothing in it to peek at.
+      onHorses: (wire) => {
+        if (!live()) return;
+        applyRace(wire);
+      },
       // The commissioner muted someone (milestone 19) — voice
       // follows chat. This event rides the gameplay topic, so
       // it can only come from the admin route; a peer cannot
@@ -1924,6 +1986,7 @@ export default function NeighborhoodRoom({
       s.seatAnchors = new Map();
       s.pendingSeat = null;
       s.pendingArcade = false;
+      s.pendingTrack = false;
       s.walk = null;
       s.walking = false;
       s.walkT = 0;
@@ -2087,6 +2150,65 @@ export default function NeighborhoodRoom({
     if (bjStake < BJ.MIN_BET) return;
     const placed = await bjCall("bet", { amount: bjStake });
     if (placed && placed.ok !== false) await bjCall("ready");
+  }
+
+  // ---- the horse race (milestone 24) -----------------------
+
+  // One broadcast (or one route reply) becomes the whole view:
+  // the track, the board, the money badge, and the countdown on
+  // the betting window out in the room. Nothing is inferred
+  // locally — including who won.
+  function applyRace(wire) {
+    const s = sRef.current;
+    if (!wire) return;
+    setRaceWire(wire);
+    s.raceHud = {
+      phase: wire.phase,
+      msLeft: Math.max(0, wire.deadline - (Date.now() + s.clockOffset)),
+      winner: wire.last ? wire.last.winner : null,
+    };
+    // A finished betting window clears anything you stacked up
+    // but never sent.
+    if (wire.phase !== "betting") {
+      setRaceStake(0);
+      setRacePick(null);
+    }
+  }
+
+  // Ask the board for something. A refusal is the normal case
+  // (a stale button, a window that just shut), so it repaints
+  // from the fresh state the server sent back with it.
+  async function raceCall(action, extra) {
+    const s = sRef.current;
+    if (!s.conn || !s.conn.horses) return null;
+    if (action !== "sync") setRaceBusy(true);
+    try {
+      const res = await s.conn.horses(action, extra);
+      if (res && res.race) applyRace(res.race);
+      // The casino is ONE wallet: a horse bet moves the same
+      // badge a blackjack bet does.
+      if (res && res.balance !== null && res.balance !== undefined) {
+        setBjBalance(res.balance);
+      }
+      return res;
+    } catch (err) {
+      if (err && err.data && err.data.race) applyRace(err.data.race);
+      if (err && err.data && err.data.balance !== null && err.data.balance !== undefined) {
+        setBjBalance(err.data.balance);
+      }
+      if (err && err.code !== "rate_limited" && action !== "sync") {
+        setToast({ text: err.message, id: performance.now() });
+      }
+      return null;
+    } finally {
+      if (action !== "sync") setRaceBusy(false);
+    }
+  }
+  raceCallRef.current = raceCall;
+
+  async function placeRaceBet() {
+    if (racePick === null || raceStake < HR.MIN_BET) return;
+    await raceCall("bet", { horse: racePick, amount: raceStake });
   }
 
   // ---- tomatoes (milestone 13) -----------------------------
@@ -2296,6 +2418,16 @@ export default function NeighborhoodRoom({
     return () => window.removeEventListener("keydown", onKey);
   }, [arcadeOpen]);
 
+  // ...and away from the betting window (milestone 24).
+  useEffect(() => {
+    if (!raceOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setRaceOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [raceOpen]);
+
   // ---- chat ------------------------------------------------
   function pushBubble(playerId, id, text) {
     const s = sRef.current;
@@ -2471,6 +2603,13 @@ export default function NeighborhoodRoom({
       if (!moving && s.pendingArcade) {
         s.pendingArcade = false;
         if (arcadeFnRef.current) arcadeFnRef.current();
+      }
+      // Arrived at the betting window (milestone 24) — open the
+      // track. Identical shape again; there is only one way to
+      // walk up to a thing in this world.
+      if (!moving && s.pendingTrack) {
+        s.pendingTrack = false;
+        if (raceOpenFnRef.current) raceOpenFnRef.current();
       }
       s.walking = moving;
 
@@ -2771,6 +2910,109 @@ export default function NeighborhoodRoom({
     };
   }, [roomId]);
 
+  // HSPN Downs runs on its own pulse (milestone 24). Slow while
+  // you are merely in the casino — enough to keep the meeting's
+  // deadlines moving and the tote board on the betting window
+  // counting down — and quicker while the track view is open.
+  // Same "pulled clock" contract as the blackjack table: this
+  // interval is the ONLY reason a gate opens or a race settles.
+  useEffect(() => {
+    if (!CASINO_ROOMS.includes(roomId)) {
+      setRaceWire(null);
+      setRaceOpen(false);
+      setRacePick(null);
+      setRaceStake(0);
+      sRef.current.raceHud = null;
+      return undefined;
+    }
+    let stopped = false;
+    const beat = () => {
+      if (stopped || !raceCallRef.current) return;
+      raceCallRef.current("sync");
+    };
+    beat();
+    const t = setInterval(beat, raceOpen ? HORSE_SYNC_OPEN_MS : HORSE_SYNC_ROOM_MS);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [roomId, raceOpen]);
+
+  // The countdown on the board is a clock, so it needs a heartbeat
+  // of its own — the wire only changes when a PHASE does.
+  useEffect(() => {
+    if (!CASINO_ROOMS.includes(roomId)) return undefined;
+    const t = setInterval(() => {
+      const s = sRef.current;
+      const wire = raceWireRef.current;
+      if (wire) {
+        s.raceHud = {
+          phase: wire.phase,
+          msLeft: Math.max(0, wire.deadline - (Date.now() + s.clockOffset)),
+          winner: wire.last ? wire.last.winner : null,
+        };
+      }
+      setRaceTick((n) => n + 1);
+    }, 500);
+    return () => clearInterval(t);
+  }, [roomId]);
+
+  // The track. Its own canvas and its own loop, exactly like the
+  // felt: the world keeps running underneath (peers still walk,
+  // chat still arrives), this just draws on top of it.
+  useEffect(() => {
+    const canvas = raceCanvasRef.current;
+    if (!raceOpen || !canvas) return undefined;
+    let raf = 0;
+    const ctx = canvas.getContext("2d");
+    const draw = () => {
+      const box = canvas.parentElement;
+      if (box) {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const w = box.clientWidth;
+        const h = box.clientHeight;
+        if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+          canvas.width = Math.round(w * dpr);
+          canvas.height = Math.round(h * dpr);
+          canvas.style.width = `${w}px`;
+          canvas.style.height = `${h}px`;
+        }
+        const wire = raceWireRef.current;
+        const now = Date.now() + sRef.current.clockOffset;
+        let race = null;
+        let u = 0;
+        if (wire && wire.seed !== null && wire.seed !== undefined) {
+          const key = `${wire.raceId}:${wire.seed}:${wire.winner}`;
+          if (raceSimRef.current.key !== key) {
+            raceSimRef.current = { key, race: HR.buildRace(wire.seed, wire.winner) };
+          }
+          race = raceSimRef.current.race;
+          if (wire.phase === "running") {
+            u = Math.max(0, Math.min(1, (now - wire.startedAt) / HR.RACE_MS));
+          } else {
+            // The results phase HOLDS the photo: the frame at the
+            // instant the winner hit the wire.
+            u = HR.photoAt(race);
+          }
+        }
+        drawTrackView(ctx, {
+          w,
+          h,
+          dpr,
+          theme: themeRef.current,
+          wire,
+          race,
+          u,
+          now,
+          selfBet: myRaceBet(wire, sRef.current.selfId),
+        });
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [raceOpen]);
+
   // The first-person table. Its own canvas and its own loop:
   // the world keeps running underneath (peers still walk, chat
   // still arrives), this just draws on top of it.
@@ -2834,9 +3076,11 @@ export default function NeighborhoodRoom({
       return;
     }
 
-    // A fresh tap re-aims the walk, so an arcade power-on
-    // queued behind the OLD walk must not fire on arrival.
+    // A fresh tap re-aims the walk, so an arcade power-on (or a
+    // trip to the betting window) queued behind the OLD walk
+    // must not fire on arrival.
     s.pendingArcade = false;
+    s.pendingTrack = false;
 
     // Interactive hotspot? (milestone 8 — the secret chain.)
     // Reveals fire instantly; keypads open the overlay. Each
@@ -2883,6 +3127,34 @@ export default function NeighborhoodRoom({
         return;
       }
       s.pendingArcade = true;
+      s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
+      s.marker = { x: spot.x, y: spot.y, t: performance.now() };
+      if (s.conn) queueMoveSend(spot.x, spot.y);
+      return;
+    }
+
+    // Betting window tap? (Milestone 24.) The arcade's shape,
+    // copied on purpose: walk to the window, and the track view
+    // opens on the arrival frame.
+    const track = s.room.track;
+    if (
+      track &&
+      wx >= track.hotspot.x &&
+      wx <= track.hotspot.x + track.hotspot.w &&
+      wy >= track.hotspot.y &&
+      wy <= track.hotspot.y + track.hotspot.h
+    ) {
+      const spot = nearestWalkable(s.room, s.grid, track.approach.x, track.approach.y);
+      if (!spot) return;
+      const path = findPath(s.room, s.grid, s.pos.x, s.pos.y, spot.x, spot.y);
+      s.pendingExit = null;
+      s.pendingSeat = null;
+      s.pendingArcade = false;
+      if (path.length === 0) {
+        setRaceOpen(true); // already standing at the window
+        return;
+      }
+      s.pendingTrack = true;
       s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
       s.marker = { x: spot.x, y: spot.y, t: performance.now() };
       if (s.conn) queueMoveSend(spot.x, spot.y);
@@ -2981,6 +3253,20 @@ export default function NeighborhoodRoom({
   // at the felt is the SAME room chat as the world view: same
   // log, same send path, same rate limit and filter. This is
   // only the last minute of it, echoed onto the empty felt.
+  // ---- HSPN Downs, derived (milestone 24) ----
+  // All of it off the wire. `myBet` in particular: one bet per
+  // player per race is a server rule, so the buttons ask the
+  // wire whether you are in, never a local flag.
+  const raceNow = Date.now() + sRef.current.clockOffset;
+  const raceMsLeft = raceWire ? Math.max(0, raceWire.deadline - raceNow) : 0;
+  const raceSecs = Math.ceil(raceMsLeft / 1000);
+  const myBet = myRaceBet(raceWire, sRef.current.selfId);
+  const raceBetting = !!raceWire && raceWire.phase === "betting";
+  const myLast =
+    raceWire && raceWire.last
+      ? (raceWire.last.results || []).find((r) => r.playerId === sRef.current.selfId) || null
+      : null;
+
   const atTable = bjSeated && !bjMin;
   const tableChat = atTable
     ? log
@@ -3576,6 +3862,175 @@ export default function NeighborhoodRoom({
               <div className="mx-auto w-full max-w-3xl">
                 <DeepThreatGame names={ARCADE_NAMES} />
               </div>
+            </div>
+          </div>
+        )}
+        {/* HSPN Downs (milestone 24). The betting window on the
+            casino floor, full-screen over the world in exactly
+            the way the arcade cabinet and the blackjack felt
+            are: absolute inset-0 z-30 inside the canvas frame,
+            nothing paused underneath, heartbeats still running,
+            and everyone else in the room just sees you standing
+            at the window. Everything drawn here comes off one
+            broadcast — including, once the gate is open, the
+            seed and the winner the animation is built from. */}
+        {raceOpen && (
+          <div className="absolute inset-0 z-30 flex flex-col bg-[#123024] text-gray-100 dark:bg-[#08160f]">
+            <div className="flex items-center justify-between gap-2 border-b-2 border-[#f2c81b] bg-[#0d2419] px-3 py-2 dark:bg-[#061109]">
+              <div className="flex min-w-0 items-center gap-2">
+                <p className="truncate font-display text-base font-semibold uppercase tracking-widest text-[#f2c81b]">
+                  HSPN Downs
+                </p>
+                <span className="shrink-0 rounded-full bg-[#3fae5f] px-2 py-0.5 font-display text-[11px] font-semibold uppercase tracking-widest text-white">
+                  ${bjBalance === null ? "—" : bjBalance} chips
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRaceOpen(false)}
+                className="min-h-[44px] shrink-0 rounded-md border border-[#f2c81b] px-3 font-display text-xs uppercase tracking-widest text-[#f2c81b] transition-colors hover:bg-[#f2c81b] hover:text-[#0d2419]"
+              >
+                ✕ Back to the Floor
+              </button>
+            </div>
+
+            {/* the track itself */}
+            <div className="relative min-h-0 flex-1">
+              <canvas ref={raceCanvasRef} className="block h-full w-full" />
+            </div>
+
+            {/* status + the field */}
+            <div className="border-t border-white/15 bg-[#0d2419] px-3 pb-3 pt-2 dark:bg-[#061109]">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="min-w-0 truncate font-display text-sm uppercase tracking-widest text-[#f7f0dc]">
+                  {trackStatus(raceWire, raceMsLeft, myBet)}
+                </p>
+                {raceWire && (
+                  <span className="shrink-0 font-display text-lg tabular-nums text-[#f2c81b]">
+                    {raceBetting || raceWire.phase === "results" ? `${raceSecs}s` : ""}
+                  </span>
+                )}
+              </div>
+
+              {raceBetting && !myBet && (
+                <>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {HR.HORSES.map((h) => (
+                      <button
+                        key={h.id}
+                        type="button"
+                        disabled={raceBusy}
+                        onClick={() => setRacePick(h.id)}
+                        aria-pressed={racePick === h.id}
+                        className={`flex min-h-[52px] items-center gap-2 rounded-lg border-2 px-2 text-left transition-colors disabled:opacity-40 ${
+                          racePick === h.id
+                            ? "border-[#f2c81b] bg-white/15"
+                            : "border-white/25 bg-white/5"
+                        }`}
+                      >
+                        <span
+                          className="h-6 w-6 shrink-0 rounded-full border border-black/30"
+                          style={{ backgroundColor: h.color }}
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-display text-[12px] uppercase leading-tight tracking-wide text-[#f7f0dc]">
+                            {h.name}
+                          </span>
+                          <span className="block font-display text-[11px] leading-tight text-[#f2c81b]">
+                            4 to 1
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {HR.CHIPS.map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        disabled={
+                          raceBusy ||
+                          raceStake + v > HR.MAX_BET ||
+                          (bjBalance !== null && raceStake + v > bjBalance)
+                        }
+                        onClick={() => setRaceStake((n) => n + v)}
+                        className="min-h-[44px] min-w-[56px] rounded-full border-2 border-white/40 px-3 font-display text-sm text-[#f7f0dc] disabled:opacity-35"
+                      >
+                        +${v}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      disabled={raceBusy || raceStake === 0}
+                      onClick={() => setRaceStake(0)}
+                      className="min-h-[44px] rounded-full border border-white/30 px-3 font-display text-xs uppercase tracking-widest text-[#f7f0dc] disabled:opacity-35"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      disabled={raceBusy || racePick === null || raceStake < HR.MIN_BET}
+                      onClick={placeRaceBet}
+                      className="ml-auto min-h-[44px] flex-1 rounded-md bg-[#c8203c] px-4 font-display text-sm uppercase tracking-widest text-white disabled:opacity-40 sm:flex-none"
+                    >
+                      {racePick === null
+                        ? "Pick a horse"
+                        : raceStake < HR.MIN_BET
+                          ? `Min $${HR.MIN_BET}`
+                          : `Bet $${raceStake} on ${HR.HORSES[racePick].name}`}
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {raceBetting && myBet && (
+                <p className="rounded-md border border-[#f2c81b]/60 bg-white/5 px-3 py-2 font-display text-sm text-[#f7f0dc]">
+                  Your bet is in: <span className="text-[#f2c81b]">${myBet.amount}</span> on{" "}
+                  {HR.HORSES[myBet.horse].name}. Pays $
+                  {myBet.amount * HR.PAYOUT_MULT} if it wins. One bet a race — sit
+                  tight.
+                </p>
+              )}
+
+              {raceWire && raceWire.phase === "results" && (
+                <div className="rounded-md border border-white/20 bg-white/5 px-3 py-2">
+                  <p className="font-display text-sm text-[#f7f0dc]">
+                    {(raceWire.last ? raceWire.last.order : []).map((i, k) => (
+                      <span key={i} className="mr-3 inline-block whitespace-nowrap">
+                        <span className="text-[#f2c81b]">{k + 1}.</span>{" "}
+                        <span style={{ color: HR.HORSES[i].color }}>●</span>{" "}
+                        {HR.HORSES[i].name}
+                      </span>
+                    ))}
+                  </p>
+                  {myLast && (
+                    <p className="mt-1 font-display text-sm">
+                      {myLast.payout > 0 ? (
+                        <span className="text-[#3fae5f]">
+                          You had ${myLast.amount} on {HR.HORSES[myLast.horse].name} — paid $
+                          {myLast.payout}. Up ${myLast.payout - myLast.amount}.
+                        </span>
+                      ) : (
+                        <span className="text-[#e2543f]">
+                          ${myLast.amount} on {HR.HORSES[myLast.horse].name} — not this time.
+                        </span>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* who else is on this race */}
+              {raceWire && (raceWire.bets || []).length > 0 && (
+                <p className="mt-2 max-h-14 overflow-y-auto overscroll-contain text-[12px] leading-snug text-[#f7f0dc]/75">
+                  {raceWire.bets.map((b) => (
+                    <span key={b.playerId} className="mr-3 inline-block whitespace-nowrap">
+                      <span style={{ color: HR.HORSES[b.horse].color }}>●</span>{" "}
+                      {b.username} ${b.amount}
+                    </span>
+                  ))}
+                </p>
+              )}
             </div>
           </div>
         )}

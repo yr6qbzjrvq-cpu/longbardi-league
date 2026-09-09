@@ -38,6 +38,7 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Pathfinding (nav grid, A*, smoothing) | `lib/neighborhood/pathing.js` |
 | Shared constant-speed walk math | `lib/neighborhood/movement.js` |
 | Tomato flight, splat timing + splat art | `lib/neighborhood/tomatoes.js` |
+| Party timing, confetti + disco-rig art | `lib/neighborhood/party.js` |
 | Blackjack rules engine (pure, testable) | `lib/neighborhood/blackjack.js` |
 | First-person table art + card/chip drawing | `lib/neighborhood/casinoTable.js` |
 | Blackjack rules harness (`node scripts/test-blackjack.mjs`) | `scripts/test-blackjack.mjs` |
@@ -53,9 +54,10 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | TURN relay credentials (server) | `lib/neighborhood/turnCredentials.js` |
 | Channel RLS policies (run once) | `supabase/neighborhood_realtime_auth.sql` |
 | Tomato rate limit + column (run once) | `supabase/neighborhood_tomatoes.sql` |
+| Party rate limit + room lock (run once) | `supabase/neighborhood_party.sql` |
 | Casino wallets + blackjack tables (run once) | `supabase/neighborhood_casino.sql` |
 | Horse races + wallet delta + rate limit (run once) | `supabase/neighborhood_horses.sql` |
-| Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,throw,token}/route.js` |
+| Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,throw,party,token}/route.js` |
 | Blackjack API (seats, bets, cards, money) | `app/api/neighborhood/blackjack/route.js` |
 | Horse-race API (the clock, bets, payouts) | `app/api/neighborhood/horses/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
@@ -66,8 +68,8 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Moderation screen | `app/admin/neighborhood/page.jsx` + `components/NeighborhoodModeration.jsx` |
 
 Design rule that makes the whole thing hold together: **pathing, movement,
-chat and tomato rules are pure modules imported by both the client and the API
-routes**,
+chat, tomato and party rules are pure modules imported by both the client and
+the API routes**,
 so the server validates with the exact math the client renders with, and every
 client computes identical positions from `(x, y, path, path_started_at)`.
 
@@ -202,6 +204,17 @@ cap. All return `'ok'`, `'rate_limited'` or `'not_joined'`.
   PUBLIC execute grant is revoked — it is `SECURITY DEFINER`, so leaving the
   default in place would let anyone holding the anon key stamp `throw_times`
   on a player id they know. Worth doing to the older two as well.
+- `neighborhood_record_party(p_id text, p_room text, p_now_ms bigint,
+  p_cooldown_ms bigint, p_party_ms bigint)` — the big red button. Answers two
+  questions in one call: has this player pressed one in the last 20s, and is a
+  party already running in this room. The room half needs no new table (a
+  successful press is already stamped in `party_times`, so "the room's last
+  party" is the max stamp across everyone standing in it) but it does need
+  serialising, or two lambdas a millisecond apart both read "no party" and both
+  start one — hence a `pg_advisory_xact_lock` on the room id, held for the
+  microseconds the function runs. Returns `'ok'`, `'rate_limited'`,
+  `'party_running'` or `'not_joined'`. Source:
+  `supabase/neighborhood_party.sql`. Execute is granted to `service_role` only.
 - `neighborhood_record_bj(p_id text, p_now_ms bigint)` — same shape on
   `bj_times` with a 3000ms window and a cap of 6 (~2 table actions/sec).
   Anti-spam only: the table's own phase machine is what refuses an
@@ -231,7 +244,7 @@ room, and ONE screen-share one shared by every room that has a screen:
 
 | topic | who writes | carries |
 | --- | --- | --- |
-| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw`, `voice_mute` + presence |
+| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw`, `party`, `voice_mute` + presence |
 | `neighborhood-rtc:big-board` | any player watching a screen | the five `rtc-*` screen-share events + presence |
 | `neighborhood-rtc:<roomId>` | any player with voice ON | the seven `voice-*` handshake events + presence (milestone 19; opened only while voice is on) |
 
@@ -265,6 +278,7 @@ Events on the wire:
 | `leave` | `{ id }` | player left / hopped rooms — drop the avatar |
 | `chat` | `{ id, playerId, username, text, at }` | stored message echo |
 | `throw` | `{ id, playerId, username, kind, targetId, ox, oy, tx, ty, sx, sy, at, flightMs }` | server-validated tomato; every client replays the same arc |
+| `party` | `{ id, playerId, username, room, at, durationMs }` | somebody hit the big red button; every client builds the same 10s show, confetti seeded off `id` |
 | `chat_delete` | `{ id, playerId }` | commissioner deleted a message |
 | `kicked` | `{ id, until, message }` | the named player was removed; their client shows the removed screen, everyone else treats it as a leave |
 
@@ -390,6 +404,13 @@ player: it only ever says yes or no about a grant the caller already holds.
 - `POST /api/neighborhood/move` — client sends a destination only; server
   computes the current position deterministically, runs the same A*, stores +
   broadcasts. Implicit speed cap. Rate-limited in Postgres.
+- `POST /api/neighborhood/party` — the big red button behind the bar. The
+  body carries nothing but a `playerId`: the room, the party id and the start
+  timestamp are all the server's, which is exactly what lets every browser
+  build the identical show. Refuses `no_button` in a room whose registry entry
+  has no `partyButton`, answers `429 rate_limited` at more than one press per
+  20s, and answers a plain `{ ok: true, code: "party_running" }` — not an
+  error — while a show is already running.
 - `POST /api/neighborhood/blackjack` — every casino action behind one route:
   `enter` (claim the $100), `sync` (advance the clock), `sit`, `stand`, `bet`,
   `ready`, `hit`, `stay`, `double`, `split`. Clients send an INTENT, never an
@@ -751,6 +772,8 @@ Everything else on that wall moved out from under it:
   stage right, taller now that the wall is;
 - the **pennant string** runs across the top above the screen; jukebox, pub
   tables, stools and the exit mat just moved down with the floor.
+- milestone 25 added the **big red button** at the service end of the counter
+  — see "The big red button" at the bottom of this file.
 
 The gap between the back bar and the counter is walkable on purpose: that is
 the bartender's spot, and standing in it puts you behind the bar.
@@ -1465,6 +1488,12 @@ chain — is silent **on purpose**.
   Deep Threat arcade overlay ducks the Fast Food track to ~45% instead of
   stopping it. Blackjack shares the casino floor's track — there is no other
   audio in the casino to clash with.
+- **Stings (milestone 25)** are the one thing that makes noise in a silent
+  room, and they are deliberately not room music: `startSting(id, ms)` plays a
+  fixed-length one-shot on its own bus (louder than background, bypassing
+  `master`/`duck` entirely), ducks any room track under it, and stops itself.
+  `setTrack`, the crossfade and the persisted mute choice never see it. The
+  Sports Bar is still a silent room; it just has a button in it now.
 
 ## Proximity voice chat (milestone 19) — CURRENTLY OFF
 
@@ -1629,3 +1658,96 @@ the mural still splats on the mural and fades, which is correct and funny.
 The only other change on that wall: the neon strip used to run its full width
 and now stops short of the frame with a rounded end, so the painting is not
 sitting on top of a cut-off tube light.
+
+## The big red button (milestone 25)
+
+Austin's ask: *"Can you add a big red button behind the bar in the sports bar
+that if you press it will start a short disco light show and confetti and play
+some music"*
+
+There is now a chunky red dome on a steel plinth behind the Sports Bar
+counter, hazard stripes round its collar and a **DO NOT PRESS** plate that
+nobody has ever obeyed. Tap it, your avatar walks round the left end of the
+bar into the service lane, and the room throws a **ten-second** party:
+a mirror ball drops in and spins, seven coloured beams sweep the room and pool
+on the floor, two cannons of confetti go off and keep falling, and a disco
+jingle plays. Then it all goes away and it is a sports bar again.
+
+**Everybody in the bar sees the same party, at the same time, made of the same
+confetti.** The press goes to `POST /api/neighborhood/party`, which broadcasts
+one tiny record on the gameplay topic — `(id, playerId, username, room, at,
+durationMs)` — and every client builds the whole show from it. The confetti
+geometry is seeded off a hash of the party id with the same mulberry32 the
+tomato splats use, so a hundred and thirty pieces of paper agree across
+browsers without a byte of geometry crossing the wire. The presser is not a
+special case: their client applies the party from the route's own HTTP
+response rather than inventing a local one, so their id and timestamp are the
+server's too, and the broadcast echo of their own press is swallowed by the
+"one party at a time" rule.
+
+### What stops a button cannon
+
+- **Clients cannot publish a `party` at all.** It rides the gameplay topic,
+  which is server-write-only. A forged disco is exactly as impossible as a
+  forged kick.
+- **One press per player per 20s**, and **while a show is running, extra
+  presses do nothing rather than restarting it** — both enforced in one atomic
+  call to `neighborhood_record_party` (see "SQL functions"). Pressing during a
+  party is not an error and does not burn your cooldown; the route answers
+  `{ ok: true, code: "party_running" }` and the client, which already knows a
+  party is on, does nothing.
+- **Config decides where a button exists**, not the route: a room needs a
+  `partyButton` key (hotspot + approach point) in `lib/neighborhood/rooms.js`,
+  and the route refuses `no_button` anywhere else. Adding a second button
+  somewhere is one registry key and one prop.
+- Muted players may still press it, for the same reason muted players may
+  still throw tomatoes: mute is the *chat* sanction. A kick blocks it like it
+  blocks everything.
+
+### The show
+
+All of it is a pure function of `(party.at, Date.now())` — there is no
+accumulating state anywhere, which is what makes it hidden-tab safe. A tab
+whose rAF was frozen through the whole thing comes back, finds the party
+expired against the wall clock, paints one clearing frame and is a normal
+room again; it never replays. (The same lesson the tomato splats and the
+blackjack deal animation learned.)
+
+It paints on **its own overlay canvas covering the whole stage**, one z-layer
+above the `<video>` and its splat overlay. That is the only way confetti can
+fall in *front* of a live feed instead of behind it — the big screen is a DOM
+element, so anything on the world canvas is behind the picture by definition.
+The overlay is `pointer-events: none` and `display: none` except during a
+show, so an ordinary room pays nothing for it, and its backing store is capped
+at 2x DPR (the world canvas goes to 3x) because this layer is all big additive
+gradients and that is the one thing in the show that could cost a phone
+frames.
+
+The button itself is an ordinary registry prop with a footprint, so you cannot
+stand inside it, and it depth-sorts like everything else. It reads two pieces
+of live state through the same `fx` bag the secret-chain reveals and the tote
+board use: `fx.party`, so the ring is lit for everyone for exactly the length
+of the show, and `fx.buttonPress`, the local tap time — the dome travels on
+your finger, not on the server round trip.
+
+### The music, in a room that is supposed to be silent
+
+The Sports Bar is on the silent list on purpose and stays there. What plays is
+a **sting**: a fixed-length one-shot (four-on-the-floor, offbeat open hats,
+claps on 2 and 4, octave disco bass, string stabs, Am–F–C–G at 122bpm) built
+out of the same oscillators-and-noise kit as the room tracks and scheduled by
+the same lookahead sequencer, but running on its own bus with its own level.
+It never becomes the room's track, so `setTrack`, the room-hop crossfade and
+the persisted mute choice are untouched — and the moment it ends the room is
+silent again.
+
+- **Mute is respected.** The speaker toggle off = the same lights and the same
+  confetti, in silence. The engine does not decide this; the room component
+  simply does not start the sting.
+- **A live stream is not interrupted.** If something is on the bar TV its
+  audio is ducked to 45% for the ten seconds and restored afterwards — and the
+  restore is self-healing: any frame that finds a ducked video and no party
+  puts the volume back, so a room hop or a stream that starts mid-show cannot
+  leave it stuck.
+- Hidden tab kills the sting outright rather than pausing it, because the
+  visuals it belongs to are wall-clock driven and will be over.

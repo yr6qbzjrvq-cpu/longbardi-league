@@ -121,11 +121,7 @@ import {
   makeConfetti,
   drawParty,
 } from "@/lib/neighborhood/party";
-import {
-  DANCE_DURATION_MS,
-  DANCE_COOLDOWN_MS,
-  danceStyleFromId,
-} from "@/lib/neighborhood/dance";
+import { DANCE_CYCLE_MS, danceStyleFromId } from "@/lib/neighborhood/dance";
 import {
   createBroadcaster,
   createViewer,
@@ -558,17 +554,22 @@ function drawScene(ctx, canvas, s, theme, t) {
   ents.sort((a, b) => a.y - b.y);
   const wallNowDraw = Date.now();
   // Who is dancing right now, as a pure function of the wall
-  // clock (milestone 26). A dance that has run out simply stops
-  // being one — there is nothing to unwind, and a tab that was
-  // hidden through the whole thing paints nothing on its way
-  // back. Returns undefined for everyone else, which is exactly
-  // what drawAvatar wants when nobody is dancing.
+  // clock (milestones 26, 27). A dance has no end time any
+  // more: this body is dancing because the map still says so,
+  // and the map is emptied by the things that END a dance.
+  // Returns undefined for everyone else, which is exactly what
+  // drawAvatar wants when nobody is dancing.
   const danceFor = (id) => {
     const dv = s.dances.get(id);
     if (!dv) return undefined;
     const el = wallNowDraw - dv.at;
-    if (el < 0 || el >= dv.durationMs) return undefined;
-    return { t: el / 1000, durationMs: dv.durationMs, style: dv.style };
+    if (el < 0) return undefined;
+    // `t` is simply how long this body has been dancing, and
+    // drawAvatar wraps it into the cycle. A dance that started
+    // four minutes ago is therefore on the same beat here as it
+    // is on every other screen in the room, with nothing kept in
+    // sync but the clock.
+    return { t: el / 1000, cycleMs: DANCE_CYCLE_MS, style: dv.style };
   };
   const drawStuck = (id, x, y) => {
     for (const sp of s.splats) {
@@ -845,6 +846,14 @@ export default function NeighborhoodRoom({
   const [armed, setArmed] = useState(false);
   const armedRef = useRef(false);
   armedRef.current = armed;
+  // ---- the dance button (milestones 26, 27) ----
+  // The dances themselves are NOT React state: they live in the
+  // mutable loop state below, because they are drawn rather
+  // than rendered. This one boolean is up here for the toolbar
+  // alone, so the button can light up and say STOP while you
+  // are dancing — a dance with no end time that you cannot see
+  // your way out of would be a trap, not a joke.
+  const [dancing, setDancing] = useState(false);
   const screenFxRef = useRef(null); // splat overlay, pinned over the <video>
   // ---- the big red button (milestone 25) ----
   // The party is NOT React state: it lives in the mutable loop
@@ -984,7 +993,6 @@ export default function NeighborhoodRoom({
       // read by the draw loop and by nothing above the canvas.
       // Empty map = nobody is dancing = zero cost per frame.
       dances: new Map(),
-      lastDanceAt: 0,
       buttonPressAt: 0,
       partyPainted: false,
       videoDucked: false,
@@ -1685,6 +1693,28 @@ export default function NeighborhoodRoom({
     // stops the same dancer on the same event — no cancel
     // message, and nothing left over to drift.
     if (Array.isArray(p.path) && p.path.length) s.dances.delete(p.id);
+    // Milestone 27: a dance has no end time, so the wire carries
+    // the dancer's state outright — every roster record and
+    // every move broadcast says whether that body is dancing and
+    // since when. This is the self-healing path. Somebody who
+    // started dancing before you walked in starts dancing on
+    // your screen at the right beat; a dance-stop event that
+    // never arrived is corrected by the next resync instead of
+    // leaving a body twitching in the corner all night.
+    if ("danceId" in p) {
+      if (p.danceId && Number(p.danceAt) > 0) {
+        const cur = s.dances.get(p.id);
+        if (!cur || cur.id !== p.danceId) {
+          s.dances.set(p.id, {
+            id: p.danceId,
+            at: Number(p.danceAt) - s.clockOffset,
+            style: danceStyleFromId(p.danceId),
+          });
+        }
+      } else {
+        s.dances.delete(p.id);
+      }
+    }
     s.peers.set(p.id, {
       id: p.id,
       username: p.username || (prev && prev.username) || "???",
@@ -1740,7 +1770,14 @@ export default function NeighborhoodRoom({
           applyWire(p);
         }
         for (const id of [...s.peers.keys()]) {
-          if (!seen.has(id)) s.peers.delete(id);
+          if (!seen.has(id)) {
+            s.peers.delete(id);
+            // ...and their dance goes with them (milestone 27).
+            // This is the stale-state safety net: a dancer whose
+            // laptop shut falls off the roster within the active
+            // window and stops dancing for everybody still here.
+            s.dances.delete(id);
+          }
         }
         refreshCount();
       },
@@ -1820,6 +1857,15 @@ export default function NeighborhoodRoom({
       onDance: (ev) => {
         if (!live()) return;
         addDance(ev);
+      },
+      // ...and somebody STOPPED (milestone 27). Only the dance
+      // route can publish this one either. It covers every way
+      // to end a dance that is not walking: another button, an
+      // overlay, or DANCE tapped a second time while standing
+      // perfectly still.
+      onDanceStop: (ev) => {
+        if (!live()) return;
+        endDance(ev.playerId);
       },
       // The blackjack table changed (milestone 14). Only the
       // blackjack route can publish this, so it is simply the
@@ -2013,6 +2059,7 @@ export default function NeighborhoodRoom({
       if (s.conn) s.conn.leave();
       s.conn = null;
       s.peers.clear();
+      s.dances.clear();
     };
     // The component remounts (key on updatedAt) when identity
     // changes, so this runs once per visit.
@@ -2083,7 +2130,7 @@ export default function NeighborhoodRoom({
       s.buttonPressAt = 0;
       // Dances belong to the room they were danced in.
       s.dances.clear();
-      s.lastDanceAt = 0;
+      setDancing(false);
       // The table belongs to the casino floor. Leaving the room
       // does NOT stand you up server-side — the seat is freed by
       // the route the moment it notices you are gone — but the
@@ -2457,7 +2504,8 @@ export default function NeighborhoodRoom({
 
   // ---- the dance button (milestone 26) ---------------------
   //
-  // One broadcast record becomes one short routine. The dancer
+  // One broadcast record becomes a routine that repeats until
+  // something ends it (milestone 27). The dancer
   // gets the SAME record back from the route's HTTP response
   // rather than inventing a local one, so the dance id — and
   // therefore the routine hashed off it — is identical in every
@@ -2466,13 +2514,15 @@ export default function NeighborhoodRoom({
     const s = sRef.current;
     if (!ev || !ev.id || !ev.playerId) return;
     const at = (Number(ev.at) || Date.now()) - s.clockOffset;
-    const durationMs = Number(ev.durationMs) || DANCE_DURATION_MS;
-    const now = Date.now();
     // Already over. A hidden tab freezes rAF, so an event that
     // arrived while you were away can be minutes old by the
     // time this runs — starting it here would replay a dance
     // nobody is doing. Same lesson the party learned.
-    if (now - at >= durationMs) return;
+    // Milestone 26 threw away an event that arrived stale — a
+    // hidden tab freezes rAF, so a three-second clip could be
+    // over by the time this ran. A STATE does not go stale, it
+    // only gets older: if the room says this body is dancing, we
+    // start drawing it at whatever beat it has reached.
     const mine = s.dances.get(ev.playerId);
     // One dance per body: the echo of our own broadcast lands
     // on the record we already have and changes nothing.
@@ -2480,17 +2530,56 @@ export default function NeighborhoodRoom({
     s.dances.set(ev.playerId, {
       id: ev.id,
       at,
-      durationMs,
       style: danceStyleFromId(ev.id),
     });
+    if (ev.playerId === s.selfId) setDancing(true);
+  }
+
+  // The other direction, from anywhere: the room forgets that
+  // body is dancing. Peers arrive here off the dance-stop
+  // event; we arrive here through endMyDance.
+  function endDance(playerId) {
+    const s = sRef.current;
+    if (!playerId || !s.dances.has(playerId)) return;
+    s.dances.delete(playerId);
+    if (playerId === s.selfId) setDancing(false);
   }
 
   // Dance. Nothing goes on the wire but our own id — the room,
   // the id and the start time are the server's, which is
   // exactly why every client can play the identical routine.
-  async function startDance() {
+  // Anything deliberate ends your dance (milestone 27): a step,
+  // a door, a prop, any other button in the toolbar, an overlay
+  // opening, walking out of the room. Local first, so the body
+  // stops on the finger rather than on the round trip — then
+  // one tiny POST, because the ROUTE is what broadcasts the
+  // dance-stop event. Clients still cannot publish gameplay
+  // events, and giving a dance no end time did not change that.
+  //
+  // Cheap to call when nothing is going on, which is most of
+  // the time: it is back out before it touches the network
+  // unless we really are dancing.
+  function endMyDance() {
     const s = sRef.current;
-    const now = Date.now();
+    setDancing(false);
+    if (!s.dances.has(s.selfId)) return;
+    s.dances.delete(s.selfId);
+    if (s.conn && s.conn.stopDance) s.conn.stopDance().catch(() => {});
+  }
+
+  // The DANCE button. It TOGGLES, and there is no cooldown:
+  // dancing, tap, stopped, tap, dancing again is a supported
+  // thing to do at whatever speed a finger can manage — that
+  // was the whole ask. Nothing goes on the wire but our own id
+  // and which way we are going; the room, the dance id and the
+  // start time stay the server's, which is exactly why every
+  // client can loop the identical routine off one timestamp.
+  async function toggleDance() {
+    const s = sRef.current;
+    if (s.dances.has(s.selfId)) {
+      endMyDance();
+      return;
+    }
     if (!s.conn) {
       setToast({
         text: "Dancing needs the live connection — try a refresh.",
@@ -2498,21 +2587,15 @@ export default function NeighborhoodRoom({
       });
       return;
     }
-    const running = s.dances.get(s.selfId);
-    if (running && now - running.at < running.durationMs) return;
-    if (now - s.lastDanceAt < DANCE_COOLDOWN_MS) {
-      setToast({
-        text: "Catch your breath — one dance at a time.",
-        id: performance.now(),
-      });
-      return;
-    }
-    s.lastDanceAt = now;
     try {
+      // The dancer applies the record from the route's own
+      // response rather than waiting for the echo, so our dance
+      // and everybody else's are built from the identical
+      // timestamp. A start that lands on a dance already running
+      // comes back as that same dance, never a second one.
       const res = await s.conn.startDance();
       if (res && res.dance) addDance(res.dance);
     } catch (err) {
-      s.lastDanceAt = 0;
       if (err && err.code === "kicked") {
         handleKicked({ message: err.message, until: err.data && err.data.until });
         return;
@@ -2991,11 +3074,10 @@ export default function NeighborhoodRoom({
       // A finished dance stops costing anything: the map goes
       // back to empty and the draw loop is exactly what it was
       // before anybody danced (milestone 26).
-      if (s.dances.size) {
-        for (const [id, dv] of s.dances) {
-          if (throwNow - dv.at >= dv.durationMs) s.dances.delete(id);
-        }
-      }
+      // Milestone 26 swept finished dances up here on every
+      // frame. Milestone 27 has none to sweep: a dance ends when
+      // something ends it, and whatever ends it takes the map
+      // entry with it.
       // Self-healing: if the feed got ducked for a party that
       // ended some other way (room hop, a stream that started
       // mid-show), put it back on the next visible frame.
@@ -3443,10 +3525,13 @@ export default function NeighborhoodRoom({
     s.pendingArcade = false;
     s.pendingTrack = false;
     s.pendingParty = false;
-    // Tapping to walk cancels your dance, locally on the tap
-    // (milestone 26). Everyone else drops it a beat later off
-    // the same "move" broadcast, in applyWire.
-    s.dances.delete(s.selfId);
+    // This tap — a walk, a door, a prop, a keypad, the arcade
+    // cabinet — is a deliberate action, so it ends your dance
+    // (milestones 26, 27). Everyone else drops it off the same
+    // "move" broadcast they were already listening to, or off
+    // the dance-stop event for the taps that do not produce a
+    // walk at all.
+    endMyDance();
 
     // Interactive hotspot? (milestone 8 — the secret chain.)
     // Reveals fire instantly; keypads open the overlay. Each
@@ -3714,7 +3799,20 @@ export default function NeighborhoodRoom({
             </span>
           )}
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* Any press in this row is a deliberate action, so it
+            ends your dance (milestone 27) — every button in it,
+            including ones added long after this was written.
+            DANCE itself is exempt: it does its own toggling, and
+            ending the dance out from under it would turn "stop"
+            into "start again". */}
+        <div
+          className="flex flex-wrap items-center justify-end gap-2"
+          onPointerDownCapture={(e) => {
+            const t = e.target;
+            if (t && t.closest && t.closest("[data-dance-button]")) return;
+            endMyDance();
+          }}
+        >
           <button
             type="button"
             onClick={() => setArmed((v) => !v)}
@@ -3741,11 +3839,22 @@ export default function NeighborhoodRoom({
           {!overlayUp && (
             <button
               type="button"
-              onClick={startDance}
-              title="Bust a move — everyone in the room sees it"
-              className="min-h-[44px] rounded-md border border-violet-600 px-3 font-display text-xs uppercase tracking-widest text-violet-600 transition-colors hover:bg-violet-600 hover:text-white dark:border-violet-400 dark:text-violet-300 dark:hover:text-white"
+              data-dance-button="1"
+              onClick={toggleDance}
+              aria-pressed={dancing}
+              title={
+                dancing
+                  ? "Stop dancing"
+                  : "Bust a move — you keep going until you do something else"
+              }
+              className={
+                "min-h-[44px] rounded-md border px-3 font-display text-xs uppercase tracking-widest transition-colors " +
+                (dancing
+                  ? "border-violet-700 bg-violet-600 text-white"
+                  : "border-violet-600 text-violet-600 hover:bg-violet-600 hover:text-white dark:border-violet-400 dark:text-violet-300 dark:hover:text-white")
+              }
             >
-              Dance
+              {dancing ? "Stop" : "Dance"}
             </button>
           )}
           <button

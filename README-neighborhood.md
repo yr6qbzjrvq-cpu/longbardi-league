@@ -39,6 +39,7 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Shared constant-speed walk math | `lib/neighborhood/movement.js` |
 | Tomato flight, splat timing + splat art | `lib/neighborhood/tomatoes.js` |
 | Party timing, confetti + disco-rig art | `lib/neighborhood/party.js` |
+| Dance timing + which of the three routines | `lib/neighborhood/dance.js` |
 | Blackjack rules engine (pure, testable) | `lib/neighborhood/blackjack.js` |
 | First-person table art + card/chip drawing | `lib/neighborhood/casinoTable.js` |
 | Blackjack rules harness (`node scripts/test-blackjack.mjs`) | `scripts/test-blackjack.mjs` |
@@ -215,6 +216,15 @@ cap. All return `'ok'`, `'rate_limited'` or `'not_joined'`.
   microseconds the function runs. Returns `'ok'`, `'rate_limited'`,
   `'party_running'` or `'not_joined'`. Source:
   `supabase/neighborhood_party.sql`. Execute is granted to `service_role` only.
+- `neighborhood_record_dance(p_id text, p_now_ms bigint, p_cooldown_ms
+  bigint)` — the dance button. Plain sliding-window rate limit on
+  `dance_times`, the same shape as `neighborhood_record_throw`, except the
+  window arrives as a parameter so `DANCE_COOLDOWN_MS` in
+  `lib/neighborhood/dance.js` stays the only place the number lives. No
+  advisory lock and no room-wide question: a dance belongs to one body, so two
+  people dancing at once is not a conflict, it is a party. Returns `'ok'`,
+  `'rate_limited'` or `'not_joined'`. Source:
+  `supabase/neighborhood_dance.sql`. Execute is granted to `service_role` only.
 - `neighborhood_record_bj(p_id text, p_now_ms bigint)` — same shape on
   `bj_times` with a 3000ms window and a cap of 6 (~2 table actions/sec).
   Anti-spam only: the table's own phase machine is what refuses an
@@ -244,7 +254,7 @@ room, and ONE screen-share one shared by every room that has a screen:
 
 | topic | who writes | carries |
 | --- | --- | --- |
-| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw`, `party`, `voice_mute` + presence |
+| `neighborhood:<roomId>` | **the server only** | `move`, `leave`, `chat`, `chat_delete`, `kicked`, `throw`, `party`, `dance`, `voice_mute` + presence |
 | `neighborhood-rtc:big-board` | any player watching a screen | the five `rtc-*` screen-share events + presence |
 | `neighborhood-rtc:<roomId>` | any player with voice ON | the seven `voice-*` handshake events + presence (milestone 19; opened only while voice is on) |
 
@@ -411,6 +421,12 @@ player: it only ever says yes or no about a grant the caller already holds.
   has no `partyButton`, answers `429 rate_limited` at more than one press per
   20s, and answers a plain `{ ok: true, code: "party_running" }` — not an
   error — while a show is already running.
+- `POST /api/neighborhood/dance` — the dance button in the toolbar. Same
+  shape as `/party` and, like it, the body carries nothing but a `playerId`.
+  Unlike `/party` there is no room gate: **every** room qualifies, so there is
+  no registry key to add. Answers `429 rate_limited` at more than one dance
+  per 4s. Muted players may still dance — mute is the chat sanction; a kick
+  still blocks it.
 - `POST /api/neighborhood/blackjack` — every casino action behind one route:
   `enter` (claim the $100), `sync` (advance the clock), `sit`, `stand`, `bet`,
   `ready`, `hit`, `stay`, `double`, `split`. Clients send an INTENT, never an
@@ -1751,3 +1767,76 @@ silent again.
   leave it stuck.
 - Hidden tab kills the sting outright rather than pausing it, because the
   visuals it belongs to are wall-clock driven and will be over.
+
+---
+
+## The dance button (milestone 26)
+
+Austin's ask: *"Add a dance button too that will make your avatar do a little
+dance for a few seconds. Put it up at the top by the tomato button."*
+
+There is now a **DANCE** button in the room toolbar, second in the row, right
+next to TOMATO. Tap it and your avatar does three and a half seconds of
+footwork: two bounces with the arms pumping, two side-steps with both arms
+pointing the way, one full spin, then three quick hops with its hands in the
+air — and a couple of little music notes floating off the top of its head so
+the joke still reads at phone size. Then it stands there like nothing
+happened.
+
+**Everybody in the room sees the same dance, at the same time, doing the same
+moves.** The tap goes to `POST /api/neighborhood/dance`, which broadcasts one
+tiny record on the gameplay topic — `(id, playerId, username, room, at,
+durationMs)` — and every client builds the routine from it. There are three
+routines and which one you get is a hash of the dance id, so it is not on the
+wire at all: every browser hashes the same id and picks the same choreography.
+The dancer applies the record from the route's own HTTP response rather than
+waiting for the echo, so their own dance and everyone else's are built from
+the identical timestamp.
+
+**It works in every room.** The Town Square, the Grocery Store, the Dairy, the
+casino floor — there is no `partyButton`-style registry key for it and nothing
+to add when a room is added.
+
+The choreography itself lives in `drawAvatar` (`lib/neighborhoodAvatar.js`) as
+`danceRig(t, dur, style)`: a pure function of *seconds since the dance
+started*, returning a bob, a lean, a side-shift, a squash, a horizontal scale
+(the spin is the old sprite trick — squash the body flat and out the other
+side), two arm angles and two foot lifts. The body rides one extra canvas
+transform; the arms rotate about their shoulders; the notes are drawn outside
+that transform so they do not spin with the body. An avatar with no `dance`
+option draws exactly the byte-for-byte same picture it always did, which is
+why the creator preview never noticed.
+
+### What stops a dance cannon
+
+- One dance per player per **4 seconds**, enforced in Postgres
+  (`neighborhood_record_dance`) and paced client-side to the same number so
+  the 429 is rare.
+- Clients cannot publish on the gameplay topic at all, so a forged dance is
+  exactly as impossible as a forged kick — an anon `broadcast` to
+  `neighborhood:<room>` with a real player's id is accepted by the API and
+  then dropped by the channel's RLS. Nothing renders.
+- A kick blocks it. A mute does not: dancing is a gesture, like a tomato.
+- Nothing is written to `neighborhood_messages`. A dance is ephemeral and
+  leaves no moderation trail.
+
+### Walking wins, and nothing is left over
+
+Tapping the floor to walk cancels your dance on the tap. Everyone else drops
+it a beat later off the same `move` broadcast they were already listening to
+(`applyWire`), so there is no cancel message and nothing to drift.
+
+The rest is the same wall-clock discipline as the party: a dance is running
+only while `now - at < durationMs`, so a tab that was hidden through the whole
+thing comes back to a dance that is simply over rather than replaying one, and
+the moment a dance ends its entry leaves the map and the draw loop is exactly
+what it was before anybody danced.
+
+### Where the button isn't
+
+The toolbar drops the button entirely while an overlay owns the screen — the
+blackjack felt, the arcade cabinet, the betting window, a keypad, theater
+mode. You cannot see the room from inside any of them, and a seated body is
+painted in its chair, where a dance would go unseen. The row also wraps now
+(`flex-wrap`), which is what keeps EDIT CHARACTER on the toolbar instead of
+off the edge of a 380px phone.

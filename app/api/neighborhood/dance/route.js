@@ -9,63 +9,55 @@ import {
   broadcastToRoom,
 } from "@/lib/neighborhood/multiplayerServer";
 import {
-  DANCE_DURATION_MS,
-  DANCE_COOLDOWN_MS,
+  DANCE_CYCLE_MS,
+  DANCE_FLOOD_WINDOW_MS,
+  DANCE_FLOOD_MAX,
 } from "@/lib/neighborhood/dance";
 
 export const dynamic = "force-dynamic";
 
 // ============================================================
-// POST /api/neighborhood/dance — "somebody hit the dance
-// button" (milestone 26).
+// POST /api/neighborhood/dance — "start dancing" and "stop
+// dancing" (milestones 26, 27).
 // ------------------------------------------------------------
+// Milestone 26 broadcast a three and a half second clip.
+// Milestone 27 turned a dance into a STATE with no end time, so
+// this route has two jobs now instead of one:
+//
+//   { action: "start" }  park a dance on the player's row and
+//                        tell the room
+//   { action: "stop" }   take it off the row and tell the room
+//
 // Same shape as /throw and /party, for the same reason: clients
 // cannot publish on the gameplay topic, so a dance only exists
 // because this route validated one and broadcast it. The client
-// sends NOTHING but its own id — the room, the timestamp and
-// the dance id are all the server's, which is what makes every
-// browser in the room play the identical routine on the
-// identical frame (the routine variant is hashed off the id;
-// see lib/neighborhood/dance.js).
+// still sends NOTHING but its own id and which of the two
+// things it wants — the room, the timestamp and the dance id
+// are all the server's, which is what makes every browser in
+// the room loop the identical routine on the identical frame
+// (the routine variant is hashed off the id; see
+// lib/neighborhood/dance.js).
 //
-// Two gates, in order:
-//   • the dancer has to be an active, unbanned player standing
-//     in a real room — and EVERY room qualifies, which is the
-//     one deliberate difference from the party button. You can
-//     dance in the Town Square, in the Dairy, on the casino
-//     floor. There is no room registry key to add.
-//   • one dance per player per DANCE_COOLDOWN_MS
+// WHY IT IS ON THE ROW NOW: an event can live in one broadcast.
+// A state cannot. dance_id/dance_at on neighborhood_players is
+// what lets somebody who walks in late pick up a dance already
+// in progress, lets a reconnect heal a `dance_stop` it never
+// heard, and lets the ordinary stale prune sweep away a dancer
+// who danced off into a closed laptop.
 //
-// The rate limit is one atomic, row-locked SQL call
-// (neighborhood_record_dance). If that function has not been
-// installed yet the route degrades to a per-lambda in-memory
-// version rather than 500ing — see FALLBACK below.
+// THERE IS NO COOLDOWN, and there must not be one: start, stop,
+// start again on the very next frame is the whole point of the
+// milestone. A redundant start is answered 'already_dancing'
+// with the running dance attached — an ok, not an error. The
+// only refusal left is a flood guard sized for scripts rather
+// than for hands (DANCE_FLOOD_MAX starts per
+// DANCE_FLOOD_WINDOW_MS).
 //
 // MUTED PLAYERS MAY STILL DANCE. Mute is the CHAT sanction;
 // dancing is a gesture, exactly like a tomato. A kick still
-// blocks everything. Nothing is written to
-// neighborhood_messages: a dance is ephemeral and leaves no
-// moderation trail.
+// blocks it. Nothing is written to neighborhood_messages: a
+// dance leaves no moderation trail.
 // ============================================================
-
-// FALLBACK, used only while neighborhood_record_dance is
-// missing from the database. Per lambda instance, so it is
-// weaker than the Postgres one (a cold start forgets it) — but
-// it still stops the obvious hold-the-button spam, and the SQL
-// function takes over the moment it exists.
-const memoryDances = new Map(); // playerId -> last dance ms
-
-function memoryGate(playerId, now) {
-  const mine = memoryDances.get(playerId) || 0;
-  if (now - mine < DANCE_COOLDOWN_MS) return "rate_limited";
-  memoryDances.set(playerId, now);
-  if (memoryDances.size > 500) {
-    for (const [k, v] of memoryDances) {
-      if (now - v > 60_000) memoryDances.delete(k);
-    }
-  }
-  return "ok";
-}
 
 export async function POST(request) {
   if (!(await canSeeNeighborhood())) {
@@ -85,6 +77,10 @@ export async function POST(request) {
 
     const body = await request.json();
     const playerId = String(body.playerId || "");
+    // Anything that is not an explicit "stop" is a start, so a
+    // tab left open across the deploy — which sends a playerId
+    // and nothing else — still dances instead of erroring.
+    const stopping = String(body.action || "start") === "stop";
     if (!PLAYER_ID_RE.test(playerId)) {
       return NextResponse.json(
         { error: "Bad player id.", code: "bad_player" },
@@ -94,7 +90,7 @@ export async function POST(request) {
 
     const { data: row, error: readErr } = await supabase
       .from(TABLE)
-      .select("id, username, room, kicked_until")
+      .select("id, username, room, kicked_until, dance_id, dance_at")
       .eq("id", playerId)
       .maybeSingle();
     if (readErr) throw readErr;
@@ -113,26 +109,25 @@ export async function POST(request) {
     }
 
     const now = Date.now();
+    const id = stopping
+      ? null
+      : `${now.toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
-    let gate = null;
-    const { data: rpcGate, error: gateErr } = await supabase.rpc(
+    // One atomic, row-locked SQL call does all of it: flips the
+    // state, keeps the flood window, and reports the two no-op
+    // cases rather than pretending they happened.
+    const { data: gate, error: gateErr } = await supabase.rpc(
       "neighborhood_record_dance",
       {
         p_id: playerId,
         p_now_ms: now,
-        p_cooldown_ms: DANCE_COOLDOWN_MS,
+        p_action: stopping ? "stop" : "start",
+        p_dance_id: id,
+        p_window_ms: DANCE_FLOOD_WINDOW_MS,
+        p_max: DANCE_FLOOD_MAX,
       }
     );
-    if (gateErr) {
-      const missing =
-        gateErr.code === "42883" ||
-        gateErr.code === "PGRST202" ||
-        /could not find the function|does not exist/i.test(gateErr.message || "");
-      if (!missing) throw gateErr;
-      gate = memoryGate(playerId, now);
-    } else {
-      gate = rpcGate;
-    }
+    if (gateErr) throw gateErr;
 
     if (gate === "not_joined") {
       return NextResponse.json(
@@ -142,28 +137,63 @@ export async function POST(request) {
     }
     if (gate === "rate_limited") {
       return NextResponse.json(
-        {
-          error: "Catch your breath — one dance at a time.",
-          code: "rate_limited",
-        },
+        { error: "Easy on the dance button.", code: "rate_limited" },
         { status: 429 }
       );
     }
 
-    const id = `${now.toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+    await supabase
+      .from(TABLE)
+      .update({ last_seen: new Date(now).toISOString() })
+      .eq("id", playerId);
+
+    // ---- stop ------------------------------------------------
+    if (stopping) {
+      // Nothing was running. Stay quiet on the wire: the room
+      // already believes exactly what we would be telling it.
+      if (gate === "not_dancing") {
+        return NextResponse.json({
+          ok: true,
+          code: "not_dancing",
+          serverNow: now,
+        });
+      }
+      await broadcastToRoom(row.room, "dance_stop", {
+        playerId,
+        room: row.room,
+        at: now,
+      });
+      return NextResponse.json({ ok: true, code: "stopped", serverNow: now });
+    }
+
+    // ---- start -----------------------------------------------
+    // Already dancing: hand back the dance that is RUNNING
+    // instead of starting a second one, so a double tap (or a
+    // retry) cannot restart the routine underneath the room.
+    if (gate === "already_dancing") {
+      return NextResponse.json({
+        ok: true,
+        code: "already_dancing",
+        dance: {
+          id: row.dance_id,
+          playerId,
+          username: row.username,
+          room: row.room,
+          at: Number(row.dance_at) || now,
+          cycleMs: DANCE_CYCLE_MS,
+        },
+        serverNow: now,
+      });
+    }
+
     const wire = {
       id,
       playerId,
       username: row.username,
       room: row.room,
       at: now,
-      durationMs: DANCE_DURATION_MS,
+      cycleMs: DANCE_CYCLE_MS,
     };
-
-    await supabase
-      .from(TABLE)
-      .update({ last_seen: new Date(now).toISOString() })
-      .eq("id", playerId);
 
     await broadcastToRoom(row.room, "dance", wire);
 

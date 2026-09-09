@@ -167,6 +167,11 @@ export async function POST(request) {
       path_started_at: null,
       last_seen: nowIso,
       kicked_until: null, // a lapsed ban is spent — clear it
+      // Nobody arrives mid-dance (milestone 27). A dance has no
+      // end time now, so a row that outlives a refresh could
+      // otherwise hand the room a dancer who is standing still.
+      dance_id: null,
+      dance_at: null,
     };
     const { error: upsertErr } = await supabase.from(TABLE).upsert(row);
     if (upsertErr) {

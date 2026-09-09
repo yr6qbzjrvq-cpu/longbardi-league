@@ -135,12 +135,22 @@ export async function POST(request) {
         path,
         path_started_at: path.length ? nowIso : null,
         last_seen: nowIso,
+        // Walking ends your dance (milestone 27). Clearing it
+        // HERE, in the same write that stores the path, is what
+        // makes "taking a step stops the music" true even if the
+        // browser never got its own dance-stop away — and the
+        // null rides out on the move broadcast below, so every
+        // peer stops the same dancer on the same event.
+        dance_id: null,
+        dance_at: null,
       })
       .eq("id", playerId);
     if (writeErr) throw writeErr;
 
     const wire = toWirePlayer({
       ...row,
+      dance_id: null,
+      dance_at: null,
       x: cur.x,
       y: cur.y,
       path,

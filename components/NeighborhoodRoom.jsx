@@ -114,6 +114,14 @@ import {
   drawTomatoShadow,
 } from "@/lib/neighborhood/tomatoes";
 import {
+  PARTY_DURATION_MS,
+  PARTY_COOLDOWN_MS,
+  CONFETTI_COUNT,
+  seedFromId as partySeedFromId,
+  makeConfetti,
+  drawParty,
+} from "@/lib/neighborhood/party";
+import {
   createBroadcaster,
   createViewer,
   checkBroadcastAuth,
@@ -508,7 +516,17 @@ function drawScene(ctx, canvas, s, theme, t) {
   // prop reads, so the tote board on the betting window can
   // count the next race down from the same broadcast the track
   // view draws from.
-  const fx = { flags: s.flags, times: s.flagTimes, race: s.raceHud };
+  const fx = {
+    flags: s.flags,
+    times: s.flagTimes,
+    race: s.raceHud,
+    // milestone 25: the live party (so everybody's ring is lit
+    // for exactly the length of the show) and OUR OWN press
+    // time (so the dome travels the instant it is tapped,
+    // without waiting for the server round trip).
+    party: s.party,
+    buttonPress: s.buttonPressAt,
+  };
 
   // Y-depth sort: lower feet = closer to camera = drawn later.
   // Props, every peer and ourselves all sort in ONE list.
@@ -787,6 +805,10 @@ export default function NeighborhoodRoom({
   // per browser. The synth engine itself lives in
   // lib/neighborhood/music.js and stays inert until a gesture.
   const [musicOn, setMusicOn] = useState(true);
+  // Read from the rAF loop and from the party handler, both of
+  // which live outside React's render pass.
+  const musicOnRef = useRef(true);
+  musicOnRef.current = musicOn;
   // proximity voice (milestone 19)
   const [voiceMode, setVoiceMode] = useState("off"); // off | open | ptt
   const [voiceLive, setVoiceLive] = useState(false);
@@ -804,6 +826,16 @@ export default function NeighborhoodRoom({
   const armedRef = useRef(false);
   armedRef.current = armed;
   const screenFxRef = useRef(null); // splat overlay, pinned over the <video>
+  // ---- the big red button (milestone 25) ----
+  // The party is NOT React state: it lives in the mutable loop
+  // state like tomatoes do, because it is a transient effect
+  // repainted every frame and nothing above the canvas needs to
+  // re-render for it. This canvas is its own overlay, pinned
+  // over the whole stage one z-layer above the <video>, so
+  // confetti falls in FRONT of a live feed instead of behind
+  // it.
+  const partyFxRef = useRef(null);
+  const partyFnRef = useRef(null);
   // ---- casino (milestone 14) ----
   // The table is never simulated here. `bjTable` is verbatim
   // whatever the server last broadcast (cards, whose turn,
@@ -919,6 +951,16 @@ export default function NeighborhoodRoom({
       splats: [],
       lastThrowAt: 0,
       fxPainted: false,
+      // the big red button (milestone 25): the one party this
+      // room is currently rendering (server record + the
+      // confetti built from its seed), plus the local press
+      // time so our own dome answers the finger instantly
+      party: null,
+      pendingParty: false,
+      lastPartyAt: 0,
+      buttonPressAt: 0,
+      partyPainted: false,
+      videoDucked: false,
       // chat
       selfId: player?.playerId || "self",
       bubbles: new Map(), // playerId → [{ id, text, at, until }]
@@ -991,6 +1033,8 @@ export default function NeighborhoodRoom({
     roomMusic.setDucked(arcadeOpen || raceOpen);
   }, [arcadeOpen, raceOpen]);
   // Unmount = fade out and power the graph down.
+  // Unmount = fade out and power the graph down. roomMusic.stop()
+  // also kills any party jingle still playing (milestone 25).
   useEffect(() => () => roomMusic.stop(), []);
 
   function toggleMusic() {
@@ -1726,6 +1770,15 @@ export default function NeighborhoodRoom({
         if (!live()) return;
         addThrow(ev, false);
       },
+      // Somebody hit the big red button (milestone 25). Only
+      // the party route can publish this, and it carries
+      // everything a client needs to build the identical ten
+      // seconds of disco — including our own press, whose echo
+      // addParty swallows because that party is already running.
+      onParty: (ev) => {
+        if (!live()) return;
+        addParty(ev);
+      },
       // The blackjack table changed (milestone 14). Only the
       // blackjack route can publish this, so it is simply the
       // truth: cards, chips and whose turn it is are replaced
@@ -1979,6 +2032,13 @@ export default function NeighborhoodRoom({
       s.tomatoes = [];
       s.splats = [];
       s.lastThrowAt = 0;
+      // A party belongs to the room it was thrown in, exactly
+      // like a tomato. Walking out ends your view of it (and
+      // the jingle with it); the people still in the bar carry
+      // on partying without you.
+      if (s.party) endParty();
+      s.pendingParty = false;
+      s.buttonPressAt = 0;
       // The table belongs to the casino floor. Leaving the room
       // does NOT stand you up server-side — the seat is freed by
       // the route the moment it notices you are gone — but the
@@ -2237,6 +2297,118 @@ export default function NeighborhoodRoom({
       flightMs: Number(ev.flightMs) || 600,
     });
   }
+
+  // ---- the big red button (milestone 25) -------------------
+  //
+  // One broadcast record becomes one ten-second show. The
+  // presser gets the SAME record back from the route's HTTP
+  // response rather than inventing a local one, so the party id
+  // — and therefore the confetti seeded off it — is identical
+  // in every browser in the room, including theirs.
+  function addParty(ev) {
+    const s = sRef.current;
+    if (!ev || !ev.id) return;
+    const at = (Number(ev.at) || Date.now()) - s.clockOffset;
+    const durationMs = Number(ev.durationMs) || PARTY_DURATION_MS;
+    const now = Date.now();
+    // Already over. A hidden tab freezes rAF, so an event that
+    // arrived while you were away can be minutes old by the
+    // time this runs — starting it here would replay a party
+    // nobody is having. Same lesson the tomato splats learned.
+    if (now - at >= durationMs) return;
+    // One party at a time: extra presses during a show do
+    // nothing rather than restarting it. This is also what
+    // swallows the broadcast echo of our own press.
+    if (s.party && now - s.party.at < s.party.durationMs) return;
+    s.party = {
+      id: ev.id,
+      playerId: ev.playerId || null,
+      username: ev.username || "",
+      at,
+      durationMs,
+      confetti: makeConfetti(partySeedFromId(ev.id), CONFETTI_COUNT),
+    };
+    s.buttonPressAt = performance.now() / 1000;
+    // The Sports Bar is a silent room and stays one — this is a
+    // one-shot jingle on its own bus, not a room track, and it
+    // only plays if the speaker toggle is on. Muted = the same
+    // lights and the same confetti, in silence.
+    if (musicOnRef.current) {
+      roomMusic.startSting("party", Math.max(0, at + durationMs - now) - 250);
+    }
+    // Duck a live feed slightly so the jingle reads over it
+    // without killing whatever is on the big screen. Restored
+    // in endParty, and self-healing every frame after that.
+    const v = videoRef.current;
+    if (v && !s.videoDucked) {
+      s.videoDucked = true;
+      try {
+        v.volume = 0.45;
+      } catch {
+        /* nothing playing — nothing to duck */
+      }
+    }
+  }
+
+  // Everything the party touched, put back. Called when the
+  // clock runs out, when we leave the room, and on unmount.
+  function endParty() {
+    const s = sRef.current;
+    s.party = null;
+    s.partyPainted = true; // force one clearing frame on the overlay
+    roomMusic.stopSting();
+    const v = videoRef.current;
+    if (v && s.videoDucked) {
+      s.videoDucked = false;
+      try {
+        v.volume = 1;
+      } catch {
+        /* gone already */
+      }
+    }
+  }
+
+  // Press it. Nothing goes on the wire but our own id — the
+  // room, the id and the start time are the server's, which is
+  // exactly why every client can build the identical show.
+  async function pressPartyButton() {
+    const s = sRef.current;
+    const now = Date.now();
+    // Local feedback first: the dome travels on the tap, not on
+    // the round trip.
+    s.buttonPressAt = performance.now() / 1000;
+    if (s.party && now - s.party.at < s.party.durationMs) return;
+    if (!s.conn) {
+      setToast({
+        text: "The button needs the live connection — try a refresh.",
+        id: performance.now(),
+      });
+      return;
+    }
+    if (now - s.lastPartyAt < PARTY_COOLDOWN_MS) {
+      setToast({
+        text: "Easy on the button — give it a minute.",
+        id: performance.now(),
+      });
+      return;
+    }
+    s.lastPartyAt = now;
+    try {
+      const res = await s.conn.pressPartyButton();
+      if (res && res.party) addParty(res.party);
+    } catch (err) {
+      s.lastPartyAt = 0;
+      if (err && err.code === "kicked") {
+        handleKicked({ message: err.message, until: err.data && err.data.until });
+        return;
+      }
+      setToast({
+        text: (err && err.message) || "The button didn't take.",
+        id: performance.now(),
+      });
+    }
+  }
+  partyFnRef.current = pressPartyButton;
 
   // The server said no after we already drew the throw.
   function dropThrow(id) {
@@ -2611,6 +2783,13 @@ export default function NeighborhoodRoom({
         s.pendingTrack = false;
         if (raceOpenFnRef.current) raceOpenFnRef.current();
       }
+      // Arrived behind the bar (milestone 25) — hit the button.
+      // Same "fires on the completion frame" reasoning as every
+      // other walk-then-act above.
+      if (!moving && s.pendingParty) {
+        s.pendingParty = false;
+        if (partyFnRef.current) partyFnRef.current();
+      }
       s.walking = moving;
 
       // door-transition fade eases toward its target
@@ -2689,6 +2868,25 @@ export default function NeighborhoodRoom({
       if (s.splats.length) {
         const alive = s.splats.filter((sp) => throwNow - sp.at < SPLAT_LIFE_MS);
         if (alive.length !== s.splats.length) s.splats = alive;
+      }
+      // The party runs off the wall clock too, so a tab that
+      // was hidden through the whole thing comes back to a
+      // normal sports bar rather than to ten seconds of stale
+      // confetti.
+      if (s.party && throwNow - s.party.at >= s.party.durationMs) endParty();
+      // Self-healing: if the feed got ducked for a party that
+      // ended some other way (room hop, a stream that started
+      // mid-show), put it back on the next visible frame.
+      if (!s.party && s.videoDucked) {
+        s.videoDucked = false;
+        const dv = videoRef.current;
+        if (dv) {
+          try {
+            dv.volume = 1;
+          } catch {
+            /* gone */
+          }
+        }
       }
 
       // let expired speech bubbles go
@@ -2797,6 +2995,47 @@ export default function NeighborhoodRoom({
               );
             }
             s.fxPainted = wall.length > 0;
+          }
+        }
+      }
+
+      // The party overlay (milestone 25). Pinned over the WHOLE
+      // stage, one z-layer above the <video> and its splat
+      // overlay, so beams and confetti land in front of a live
+      // feed instead of behind it. It is only mounted-visible
+      // while a party is running (plus one clearing frame), so
+      // an ordinary room pays nothing for it.
+      const pfx = partyFxRef.current;
+      if (pfx) {
+        if (!s.party && !s.partyPainted) {
+          if (pfx.style.display !== "none") pfx.style.display = "none";
+        } else {
+          if (pfx.style.display !== "block") pfx.style.display = "block";
+          // Capped at 2x rather than the world canvas's 3x: this
+          // layer is all big additive gradients, and a 3x
+          // backing store of them is the one thing in the show
+          // that could cost a phone frames. Nothing on it has
+          // an edge sharp enough to notice.
+          const pdpr = Math.min(s.dpr, 2);
+          const pw = Math.max(1, Math.round(s.viewW * pdpr));
+          const ph = Math.max(1, Math.round(s.viewH * pdpr));
+          if (pfx.width !== pw || pfx.height !== ph) {
+            pfx.width = pw;
+            pfx.height = ph;
+          }
+          pfx.style.width = `${s.viewW}px`;
+          pfx.style.height = `${s.viewH}px`;
+          const pctx = pfx.getContext("2d");
+          pctx.setTransform(1, 0, 0, 1, 0, 0);
+          pctx.clearRect(0, 0, pfx.width, pfx.height);
+          if (s.party) {
+            pctx.setTransform(pdpr, 0, 0, pdpr, 0, 0);
+            drawParty(pctx, s.viewW, s.viewH, s.party, throwNow, themeRef.current);
+            s.partyPainted = true;
+          } else {
+            // that was the clearing frame
+            s.partyPainted = false;
+            pfx.style.display = "none";
           }
         }
       }
@@ -3081,6 +3320,7 @@ export default function NeighborhoodRoom({
     // must not fire on arrival.
     s.pendingArcade = false;
     s.pendingTrack = false;
+    s.pendingParty = false;
 
     // Interactive hotspot? (milestone 8 — the secret chain.)
     // Reveals fire instantly; keypads open the overlay. Each
@@ -3155,6 +3395,37 @@ export default function NeighborhoodRoom({
         return;
       }
       s.pendingTrack = true;
+      s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
+      s.marker = { x: spot.x, y: spot.y, t: performance.now() };
+      if (s.conn) queueMoveSend(spot.x, spot.y);
+      return;
+    }
+
+    // Big red button tap? (Milestone 25.) The arcade's shape
+    // again — walk behind the bar, and the party fires on the
+    // arrival frame. Pressing while a party is already running
+    // is a no-op on purpose: the show you are watching IS the
+    // answer, and restarting it mid-confetti looks broken.
+    const btn = s.room.partyButton;
+    if (
+      btn &&
+      wx >= btn.hotspot.x &&
+      wx <= btn.hotspot.x + btn.hotspot.w &&
+      wy >= btn.hotspot.y &&
+      wy <= btn.hotspot.y + btn.hotspot.h
+    ) {
+      const spot = nearestWalkable(s.room, s.grid, btn.approach.x, btn.approach.y);
+      if (!spot) return;
+      const path = findPath(s.room, s.grid, s.pos.x, s.pos.y, spot.x, spot.y);
+      s.pendingExit = null;
+      s.pendingSeat = null;
+      s.pendingArcade = false;
+      s.pendingTrack = false;
+      if (path.length === 0) {
+        if (partyFnRef.current) partyFnRef.current(); // already there
+        return;
+      }
+      s.pendingParty = true;
       s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
       s.marker = { x: spot.x, y: spot.y, t: performance.now() };
       if (s.conn) queueMoveSend(spot.x, spot.y);
@@ -3572,6 +3843,26 @@ export default function NeighborhoodRoom({
             transformOrigin: "0 0",
             pointerEvents: "none",
             zIndex: theater ? 16 : 6,
+          }}
+        />
+        {/* The big red button's party (milestone 25). Covers
+            the whole stage rather than the screen rect, one
+            layer above the <video>, so the beams and the
+            confetti are in front of a live feed. Sized, painted
+            and hidden entirely by the rAF loop — React only
+            owns where it sits in the stack. Never takes a
+            pointer: walking, doors and tomatoes all still work
+            mid-disco. */}
+        <canvas
+          ref={partyFxRef}
+          aria-hidden="true"
+          style={{
+            display: "none",
+            position: "absolute",
+            left: 0,
+            top: 0,
+            pointerEvents: "none",
+            zIndex: theater ? 17 : 7,
           }}
         />
         {armed && (

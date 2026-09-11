@@ -121,6 +121,13 @@ import {
   makeConfetti,
   drawParty,
 } from "@/lib/neighborhood/party";
+import {
+  isDartboardHit,
+  makeDartBurst,
+  dartBurstExpired,
+  drawDartWobble,
+  drawDartBurst,
+} from "@/lib/neighborhood/dartboard";
 import { DANCE_CYCLE_MS, danceStyleFromId } from "@/lib/neighborhood/dance";
 import {
   createBroadcaster,
@@ -490,6 +497,16 @@ function drawScene(ctx, canvas, s, theme, t) {
   ensureBg(s, theme);
   ctx.drawImage(s.bg, 0, 0, s.bg.width, s.bg.height, 0, 0, room.width, room.height);
 
+  // A tomato in the bullseye knocks the board about for
+  // half a second (milestone 29). The dartboard is baked
+  // into the cached background, so the shake re-stamps
+  // that one patch of the cache instead of duplicating
+  // the art.
+  if (s.dartBursts.length) {
+    const shakeNow = Date.now();
+    for (const b of s.dartBursts) drawDartWobble(ctx, s.bg, room, P, b, shakeNow);
+  }
+
   // tap-destination ripple
   if (s.marker) {
     const age = (performance.now() - s.marker.t) / 1000;
@@ -632,6 +649,13 @@ function drawScene(ctx, canvas, s, theme, t) {
     );
     drawTomato(ctx, pt.x, pt.y, TOMATO_RADIUS, pt.rot);
   }
+
+    // Bullseye confetti (milestone 29): world space, so it
+    // falls down the wall in front of the board, and last,
+    // because it is the closest thing to the camera. A pure
+    // function of (landing time, now) - an expired burst
+    // draws nothing at all.
+    for (const b of s.dartBursts) drawDartBurst(ctx, b, wallNowDraw);
 
   // Chat draws over everything, in screen space.
   drawSpeechBubbles(ctx, s);
@@ -989,6 +1013,11 @@ export default function NeighborhoodRoom({
       // from broadcast records — nothing is stored server-side.
       tomatoes: [],
       splats: [],
+      // The bullseye easter egg (milestone 29): the confetti
+      // bursts currently falling off the Sports Bar dartboard.
+      // Same shape as the two above - ephemeral client state
+      // derived from a broadcast record, nothing server-side.
+      dartBursts: [],
       lastThrowAt: 0,
       fxPainted: false,
       // the big red button (milestone 25): the one party this
@@ -2383,6 +2412,7 @@ export default function NeighborhoodRoom({
       // Tomatoes belong to the room they were thrown in.
       s.tomatoes = [];
       s.splats = [];
+      s.dartBursts = [];
       s.lastThrowAt = 0;
       // A party belongs to the room it was thrown in, exactly
       // like a tomato. Walking out ends your view of it (and
@@ -2875,6 +2905,7 @@ export default function NeighborhoodRoom({
     const s = sRef.current;
     s.tomatoes = s.tomatoes.filter((t) => t.id !== id);
     s.splats = s.splats.filter((sp) => sp.id !== id);
+    s.dartBursts = s.dartBursts.filter((b) => b.id !== id);
   }
 
   // Impact. Splat art is generated from a hash of the throw id,
@@ -2914,6 +2945,16 @@ export default function NeighborhoodRoom({
       });
     } else {
       s.splats.push({ ...base, x: t.tx, y: t.ty, art: makeSplatArt(seed, SPLAT_RADIUS) });
+    }
+    // Bullseye (milestone 29). Every client runs this same
+    // test against the same broadcast record, so the egg
+    // fires on every screen at once without a new event and
+    // without a client publishing anything. The burst is
+    // stamped with the LANDING time, so a tab that was
+    // hidden through it finds it already expired.
+    if (isDartboardHit(s.room.id, t.kind, t.tx, t.ty)) {
+      s.dartBursts.push(makeDartBurst(t.id, base.at));
+      while (s.dartBursts.length > 3) s.dartBursts.shift();
     }
     while (s.splats.length > MAX_SPLATS) s.splats.shift();
   }
@@ -3329,6 +3370,10 @@ export default function NeighborhoodRoom({
         const alive = s.splats.filter((sp) => throwNow - sp.at < SPLAT_LIFE_MS);
         if (alive.length !== s.splats.length) s.splats = alive;
       }
+        if (s.dartBursts.length) {
+          const live = s.dartBursts.filter((b) => !dartBurstExpired(b, throwNow));
+          if (live.length !== s.dartBursts.length) s.dartBursts = live;
+        }
       // The party runs off the wall clock too, so a tab that
       // was hidden through the whole thing comes back to a
       // normal sports bar rather than to ten seconds of stale

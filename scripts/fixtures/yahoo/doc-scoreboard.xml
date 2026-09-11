@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copied from Yahoo's own published sample response for
+     /fantasy/v2/league/{league_key}/scoreboard
+     (sports.yahoo.com/developer/docs). Two of the four matchups, otherwise
+     unchanged - including the detail that these older samples carry a
+     <manager> with only a manager_id and NO nickname, which is exactly the
+     case the mapper has to survive. -->
+<fantasy_content xml:lang="en-US" yahoo:uri="https://fantasysports.yahooapis.com/fantasy/v2/league/390.l.1000/scoreboard" time="347.84603118896ms" copyright="Data provided by Yahoo! and STATS, LLC" refresh_rate="60" xmlns:yahoo="http://www.yahooapis.com/v1/base.rng" xmlns="http://fantasysports.yahooapis.com/fantasy/v2/base.rng">
+<league>
+<league_key>390.l.1000</league_key>
+<league_id>1000</league_id>
+<name>Yahoo Public 1000</name>
+<url>https://football.fantasysports.yahoo.com/2019/f1/1000</url>
+<draft_status>postdraft</draft_status>
+<num_teams>10</num_teams>
+<scoring_type>head</scoring_type>
+<current_week>16</current_week>
+<start_week>1</start_week>
+<end_week>16</end_week>
+<is_finished>1</is_finished>
+<game_code>nfl</game_code>
+<season>2019</season>
+<scoreboard>
+<week>16</week>
+<matchups count="2">
+<matchup>
+<week>16</week>
+<week_start>2019-12-17</week_start>
+<week_end>2019-12-23</week_end>
+<status>postevent</status>
+<is_playoffs>1</is_playoffs>
+<is_consolation>0</is_consolation>
+<is_matchup_recap_available>1</is_matchup_recap_available>
+<matchup_recap_url>https://football.fantasysports.yahoo.com/2019/f1/1000/recap?week=16&amp;mid1=1&amp;mid2=8</matchup_recap_url>
+<matchup_recap_title>marky's Bold Team beat Mayfield of dreams for seventh straight win, 112.82-95.80</matchup_recap_title>
+<is_tied>0</is_tied>
+<winner_team_key>390.l.1000.t.1</winner_team_key>
+<teams count="2">
+<team>
+<team_key>390.l.1000.t.1</team_key>
+<team_id>1</team_id>
+<name>marky's Bold Team</name>
+<url>https://football.fantasysports.yahoo.com/2019/f1/1000/1</url>
+<waiver_priority>6</waiver_priority>
+<number_of_moves>23</number_of_moves>
+<number_of_trades>0</number_of_trades>
+<league_scoring_type>head</league_scoring_type>
+<managers>
+<manager>
+<manager_id>1</manager_id>
+</manager>
+</managers>
+<win_probability>1</win_probability>
+<team_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>112.82</total>
+</team_points>
+<team_projected_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>108.87</total>
+</team_projected_points>
+</team>
+<team>
+<team_key>390.l.1000.t.8</team_key>
+<team_id>8</team_id>
+<name>Mayfield of dreams</name>
+<url>https://football.fantasysports.yahoo.com/2019/f1/1000/8</url>
+<waiver_priority>5</waiver_priority>
+<number_of_moves>9</number_of_moves>
+<number_of_trades>0</number_of_trades>
+<league_scoring_type>head</league_scoring_type>
+<managers>
+<manager>
+<manager_id>8</manager_id>
+</manager>
+</managers>
+<win_probability>0</win_probability>
+<team_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>95.80</total>
+</team_points>
+<team_projected_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>100.99</total>
+</team_projected_points>
+</team>
+</teams>
+</matchup>
+<matchup>
+<week>16</week>
+<week_start>2019-12-17</week_start>
+<week_end>2019-12-23</week_end>
+<status>postevent</status>
+<is_playoffs>1</is_playoffs>
+<is_consolation>1</is_consolation>
+<is_tied>0</is_tied>
+<winner_team_key>390.l.1000.t.2</winner_team_key>
+<teams count="2">
+<team>
+<team_key>390.l.1000.t.2</team_key>
+<team_id>2</team_id>
+<name>Don's Team</name>
+<managers>
+<manager>
+<manager_id>2</manager_id>
+</manager>
+</managers>
+<win_probability>1</win_probability>
+<team_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>117.32</total>
+</team_points>
+<team_projected_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>114.03</total>
+</team_projected_points>
+</team>
+<team>
+<team_key>390.l.1000.t.3</team_key>
+<team_id>3</team_id>
+<name>Team 2</name>
+<managers>
+<manager>
+<manager_id>3</manager_id>
+</manager>
+</managers>
+<win_probability>0</win_probability>
+<team_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>100.94</total>
+</team_points>
+<team_projected_points>
+<coverage_type>week</coverage_type>
+<week>16</week>
+<total>100.96</total>
+</team_projected_points>
+</team>
+</teams>
+</matchup>
+</matchups>
+</scoreboard>
+</league>
+</fantasy_content>

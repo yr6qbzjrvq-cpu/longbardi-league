@@ -286,14 +286,32 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
       .then((YT) => {
         if (!alive || !hostRef.current) return;
         setApiDead(false);
-        if (playerRef.current && playerRef.current.loadVideoById) {
-          playerRef.current.loadVideoById({
+        // IS THE OLD PLAYER STILL REAL? Walking into a room with
+        // no screen unmounts this whole component, which takes
+        // the iframe with it — but not the player OBJECT sitting
+        // in the ref. Calling loadVideoById on that corpse on the
+        // way back in is exactly how the bar ends up with a black
+        // rectangle where a channel should be. If its iframe is
+        // no longer in the document, let it go and build a new one.
+        const old = playerRef.current;
+        const oldIframe = old && old.getIframe ? old.getIframe() : null;
+        const oldAlive = !!(oldIframe && document.contains(oldIframe));
+        if (oldAlive && old.loadVideoById) {
+          old.loadVideoById({
             videoId,
             startSeconds: startSeconds(),
           });
-          if (!soundRef.current && playerRef.current.mute) playerRef.current.mute();
+          if (!soundRef.current && old.mute) old.mute();
           return;
         }
+        if (old && old.destroy) {
+          try {
+            old.destroy();
+          } catch {
+            // already gone with its host
+          }
+        }
+        playerRef.current = null;
         playerRef.current = new YT.Player(hostRef.current, {
           videoId,
           playerVars: {

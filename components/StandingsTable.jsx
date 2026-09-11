@@ -1,8 +1,9 @@
-import { sortedStandings, isPreseason } from "@/lib/leagueData";
+import { getStandings } from "@/lib/fantasy";
 
-export default function StandingsTable({ compact = false }) {
-  const teams = sortedStandings();
-  const preseason = isPreseason();
+export default async function StandingsTable({ compact = false }) {
+  // Live Yahoo standings when Yahoo is connected, the hand-built table in
+  // lib/leagueData.js otherwise. Same columns either way.
+  const { rows: teams, preseason } = await getStandings();
   const rows = compact ? teams.slice(0, 6) : teams;
 
   return (
@@ -25,7 +26,7 @@ export default function StandingsTable({ compact = false }) {
         </thead>
         <tbody>
           {rows.map((t, i) => (
-            <tr key={t.team} className="border-b border-gray-200">
+            <tr key={t.teamKey || t.team} className="border-b border-gray-200">
               <td className="py-2.5 pr-2 font-display text-gray-400">
                 {i + 1}
               </td>
@@ -46,16 +47,16 @@ export default function StandingsTable({ compact = false }) {
               {!compact && (
                 <>
                   <td className="py-2.5 pr-3 text-right text-gray-500">
-                    {t.pf.toFixed(1)}
+                    {Number(t.pf).toFixed(1)}
                   </td>
                   <td className="py-2.5 pr-3 text-right text-gray-500">
-                    {t.pa.toFixed(1)}
+                    {Number(t.pa).toFixed(1)}
                   </td>
                   <td
                     className={`py-2.5 text-right font-semibold ${
-                      t.streak.startsWith("W")
+                      String(t.streak).startsWith("W")
                         ? "text-green-600"
-                        : t.streak.startsWith("L")
+                        : String(t.streak).startsWith("L")
                           ? "text-espn"
                           : "text-gray-400"
                     }`}

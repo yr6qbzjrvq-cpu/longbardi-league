@@ -1,16 +1,18 @@
-import { WEEKLY_SCORES, isPreseason } from "@/lib/leagueData";
+import { getWeeklyScores } from "@/lib/fantasy";
 
-export default function ScoreBoard() {
-  const preseason = isPreseason();
+export default async function ScoreBoard() {
+  const { matchups, preseason } = await getWeeklyScores();
+
   return (
     <div className="divide-y divide-gray-200">
-      {WEEKLY_SCORES.matchups.map((m, i) => {
-        const homeWon = !preseason && m.homeScore > m.awayScore;
-        const awayWon = !preseason && m.awayScore > m.homeScore;
+      {matchups.map((m, i) => {
+        const pending = m.status ? m.status === "Upcoming" : preseason;
+        const homeWon = !pending && m.homeScore > m.awayScore;
+        const awayWon = !pending && m.awayScore > m.homeScore;
         return (
           <div key={i} className="py-2 text-sm">
-            <ScoreRow team={m.away} score={m.awayScore} won={awayWon} preseason={preseason} />
-            <ScoreRow team={m.home} score={m.homeScore} won={homeWon} preseason={preseason} />
+            <ScoreRow team={m.away} score={m.awayScore} won={awayWon} pending={pending} />
+            <ScoreRow team={m.home} score={m.homeScore} won={homeWon} pending={pending} />
           </div>
         );
       })}
@@ -18,7 +20,7 @@ export default function ScoreBoard() {
   );
 }
 
-function ScoreRow({ team, score, won, preseason }) {
+function ScoreRow({ team, score, won, pending }) {
   return (
     <div className="flex items-center justify-between py-0.5">
       <span className={won ? "font-semibold text-gray-900" : "text-gray-600"}>
@@ -29,7 +31,7 @@ function ScoreRow({ team, score, won, preseason }) {
           won ? "font-semibold text-gray-900" : "text-gray-500"
         }`}
       >
-        {preseason ? "–" : score.toFixed(1)}
+        {pending ? "–" : Number(score).toFixed(1)}
       </span>
     </div>
   );

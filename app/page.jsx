@@ -4,20 +4,23 @@ import HeroArticle from "@/components/HeroArticle";
 import ArticleCard from "@/components/ArticleCard";
 import StandingsTable from "@/components/StandingsTable";
 import ScoreBoard from "@/components/ScoreBoard";
+import YahooAttribution from "@/components/YahooAttribution";
 import {
   getFeaturedArticle,
   getRecentArticles,
   getPublishedArticles,
 } from "@/lib/articles";
-import { WEEKLY_SCORES, isPreseason, articleHref } from "@/lib/leagueData";
+import { articleHref } from "@/lib/leagueData";
+import { getWeeklyScores } from "@/lib/fantasy";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const [featured, recent, all] = await Promise.all([
+  const [featured, recent, all, scores] = await Promise.all([
     getFeaturedArticle(),
     getRecentArticles(6),
     getPublishedArticles(),
+    getWeeklyScores(),
   ]);
   const headlines = all.slice(0, 8);
 
@@ -67,7 +70,7 @@ export default async function HomePage() {
 
           <div className="rounded-md border border-gray-200">
             <BoxHeader
-              title={`Week ${WEEKLY_SCORES.week} ${isPreseason() ? "Matchups" : "Scores"}`}
+              title={`Week ${scores.week} ${scores.preseason ? "Matchups" : "Scores"}`}
             />
             <div className="px-4 pb-2">
               <ScoreBoard />
@@ -75,6 +78,9 @@ export default async function HomePage() {
           </div>
         </aside>
       </div>
+
+      {/* Only renders when the page is showing Yahoo data. */}
+      <YahooAttribution />
     </div>
   );
 }

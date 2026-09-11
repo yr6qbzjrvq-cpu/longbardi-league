@@ -1,18 +1,26 @@
 import StandingsTable from "@/components/StandingsTable";
-import { CHAMPIONS, LEAGUE, isPreseason } from "@/lib/leagueData";
+import YahooAttribution from "@/components/YahooAttribution";
+import { CHAMPIONS, LEAGUE } from "@/lib/leagueData";
+import { getStandings } from "@/lib/fantasy";
+
+// Dynamic so live standings are never frozen into a build. With Yahoo
+// unconfigured this renders exactly the same hand-built table as before.
+export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Standings & History" };
 
-export default function StandingsPage() {
+export default async function StandingsPage() {
+  const { preseason, week } = await getStandings();
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <h1 className="mb-1 font-display text-3xl font-semibold uppercase tracking-wide text-gray-900 sm:text-4xl">
         {LEAGUE.season} Standings
       </h1>
       <p className="mb-6 text-sm text-gray-500">
-        {isPreseason()
+        {preseason
           ? "Preseason"
-          : `Through Week ${LEAGUE.currentWeek - 1}`}{" "}
+          : `Through Week ${Math.max(1, week - 1)}`}{" "}
         · Top 6 make the playoffs · Top 2 earn byes
       </p>
 
@@ -59,6 +67,8 @@ export default function StandingsPage() {
           ))}
         </div>
       </section>
+
+      <YahooAttribution />
     </div>
   );
 }

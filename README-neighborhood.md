@@ -187,6 +187,36 @@ is doing something specific: of the several lambdas that may notice a race is
 over at the same instant, exactly **one** wins the write and therefore exactly
 one settles it. That is what stops a winner being paid twice.
 
+### Table `neighborhood_channels` (milestone 28)
+
+The TV lineup, maintained at `/admin/channels`. Columns: `id` (uuid), `kind`
+(`tv` | `youtube`), `name`, `url`, `sort`, `enabled`, `created_at`,
+`updated_at`. RLS on, zero policies.
+
+Two lists in one table. A `tv` row is a **YouTube TV** link the popup
+broadcast can be pointed at; its URL is an OPAQUE STRING — tv.youtube.com is
+behind a login and its links are not a documented format, so nothing in this
+codebase builds one or parses one. It is length-checked, host-checked
+(`tv.youtube.com`) and handed back. A `youtube` row is a public video or live
+stream; that URL *is* parsed, because the IFrame API wants a video id, and the
+id is derived on read (`toWireChannel`) rather than stored — fixing the parser
+fixes every row ever saved.
+
+### Table `neighborhood_tv_state` (milestone 28)
+
+One row, `id = big-board` — the SCREEN CHANNEL id, because one broadcast and
+now one TV guide light up every room with a screen. Columns: `yt_channel_id` +
+`yt_started_at` (what the screens are playing and when it started),
+`tv_channel_id` (the last YouTube TV channel requested), `changed_kind`,
+`changed_by`, `changed_at` (the global rate limit, and who touched the remote
+last), `popup_by` + `popup_at` (the commissioner tab saying a popup-mode
+broadcast is live), `version`, `updated_at`. RLS on, zero policies.
+
+`popup_at` is a STAMP WITH A SHELF LIFE, not a flag. Austin’s broadcasting tab
+renews it every 15s while the popup is open and the room stops honouring
+YouTube TV requests once it is 45s stale — so a shut laptop takes the remote
+away on its own, with nobody pressing anything.
+
 ### SQL functions (Database → Functions in the Supabase dashboard)
 
 All three are `plpgsql`, `SECURITY DEFINER`, `SET search_path TO 'public'`, and
@@ -246,6 +276,19 @@ cap. All return `'ok'`, `'rate_limited'` or `'not_joined'`.
   one-bet-per-player-per-race rule in the engine is the real limit. Source for
   both: `supabase/neighborhood_horses.sql`. Execute is granted to
   `service_role` only.
+- `neighborhood_record_channel(p_id text, p_by text, p_board text, p_kind
+  text, p_channel uuid, p_now_ms bigint, p_gap_ms bigint, p_window_ms bigint,
+  p_max integer)` — the remote. Answers three questions in one row-locked
+  call: is this player in the room, has ANYBODY changed the channel inside the
+  last `p_gap_ms` (the global limit — this is the one that stops a fight over
+  the remote), and is this one player leaning on it. The state row is taken
+  `for update` rather than read-then-written, or two lambdas a millisecond
+  apart both see an idle remote and both win. Lock order is always
+  players-then-state so it cannot deadlock the other functions. Returns jsonb:
+  `{"code":"ok"}` | `{"code":"cooling","retryInMs":…,"changedBy":…}` |
+  `{"code":"rate_limited"}` | `{"code":"not_joined"}`. Source:
+  `supabase/neighborhood_channels.sql`. Execute is granted to `service_role`
+  only.
 
 ### Realtime channels
 
@@ -414,6 +457,13 @@ player: it only ever says yes or no about a grant the caller already holds.
 - `POST /api/neighborhood/move` — client sends a destination only; server
   computes the current position deterministically, runs the same A*, stores +
   broadcasts. Implicit speed cap. Rate-limited in Postgres.
+- `POST /api/neighborhood/channels` — the remote (milestone 28). `action:
+  "change"` asks for a channel by id; the body never carries an outcome. The
+  route checks the player is unbanned and standing in a room that HAS a screen,
+  that the channel is in the lineup and enabled, that a YouTube TV request has
+  a live popup broadcast to steer, and the room-wide one-change-per-12s limit —
+  then broadcasts `tv_channel` to every screen room. `action: "sync"` is a
+  read. `GET` returns the lineup plus what the board is showing.
 - `POST /api/neighborhood/party` — the big red button behind the bar. The
   body carries nothing but a `playerId`: the room, the party id and the start
   timestamp are all the server's, which is exactly what lets every browser
@@ -1840,3 +1890,174 @@ mode. You cannot see the room from inside any of them, and a seated body is
 painted in its chair, where a dance would go unseen. The row also wraps now
 (`flex-wrap`), which is what keeps EDIT CHARACTER on the toolbar instead of
 off the edge of a 380px phone.
+
+## The TV guide (milestone 28)
+
+Austin, after a season of pointing Share My Screen at a YouTube TV tab:
+*"Let the room change the channel."* And, separately: *"When I am not
+broadcasting the screens should still have something on."* Those are two
+features that share one remote, so they shipped together.
+
+The two big screens — the Mission Control board and the Sports Bar screen over
+the counter — now have a TV GUIDE button in the toolbar and a little remote
+hanging under the near corner of the TV. Both open the same panel: what is on,
+who put it on, how long until the remote is warm again, and one button per
+channel.
+
+### The popup trick, and why a browser allows it
+
+Plain Share My Screen is untouched: pick any tab, it goes on the board, and
+nobody can change what you picked. The new button next to it, **Broadcast
+YouTube TV**, does one extra thing first — it OPENS the window it is about to
+capture:
+
+```js
+const win = window.open("https://tv.youtube.com/", "hspn-youtube-tv", "width=1280,height=720");
+await sc.broadcaster.start({ hd, popup: win });
+```
+
+That is the whole trick. A page may set `location` on a window IT OPENED even
+when the destination is a different origin — navigating a window you own is
+one of the few cross-origin operations the web still permits (reading it is
+not, and we never try). So the tab that opened the popup can re-aim it at any
+URL, forever, while the capture keeps running and every viewer sees the
+channel change a second or two later.
+
+It has to be `window.open` INSIDE the click. A popup opened after an `await`
+is a popup blocker’s favourite meal, which is why the window is opened first
+and the admin gate + `getDisplayMedia` run after it.
+
+While a popup broadcast is live, `lib/neighborhood/screenshare.js` keeps a
+heartbeat on it: every 15 seconds it re-stamps `popup_at` and checks
+`popup.closed`. Close the window and the broadcast ends by itself rather than
+leaving a dead rectangle on two walls.
+
+### What the remote can actually reach
+
+A viewer taps a channel. That is a REQUEST, not an action:
+
+1. the client POSTs `/api/neighborhood/channels` with a channel id — no URL,
+   no outcome, nothing the client gets to decide;
+2. the route checks the asker is an unbanned player standing in a room with a
+   screen, that the channel is in the lineup, that a popup broadcast is
+   actually live, and the room-wide rate limit;
+3. it broadcasts `tv_channel` on the GAMEPLAY topic — the one clients cannot
+   publish on;
+4. every client in both screen rooms renders the change; and exactly one of
+   them, the tab that owns the popup, also does `popup.location.href = url`.
+
+Step 4 is worth staring at. The URL travels to everybody, but only the opener
+can do anything with it, and "am I the opener" is not a claim — it is a live
+object reference in one tab’s memory. Nobody else can steer that window even
+with the exact same payload in front of them.
+
+### Always-on YouTube, when nobody is broadcasting
+
+With no broadcast running, the same guide offers the `youtube` lineup and the
+screens play it through the YouTube IFrame API — an `<iframe>` in a box the
+room’s rAF loop pins to `screenRectFor(room)`, exactly like the screen-share
+`<video>` beside it: same camera transform, same theater framing, same
+TAP FOR SOUND, and the tomato splat canvas still sits one layer above it.
+
+**A live broadcast always wins the glass.** The player hides itself the moment
+a feed arrives (or a popup broadcast starts) and comes back to the last
+channel when it ends — no page reload, no re-pick.
+
+### Keeping two phones on the same joke
+
+The state row carries the channel and the millisecond it started. A live
+YouTube stream needs nothing: every player is already at the live edge. A VOD
+is seeked to `serverNow - yt_started_at`, wrapped by its own duration so a
+long night loops instead of sitting on a dead frame, and re-checked every five
+seconds — but only CORRECTED past 2.5s of drift, because a seek looks far
+worse than two seconds of skew.
+
+Two things learned the hard way, both now handled:
+
+- **Chrome will not start video in a hidden tab and never retries.** Same trap
+  the screen-share `<video>` hits on iOS. The player is nudged on
+  `visibilitychange` and once a beat while a channel is supposed to be on, so
+  a TV you looked away from is still playing when you look back.
+- **Walking into a room with no screen unmounts the iframe but not the player
+  object.** Reusing that corpse on the way back in is exactly how the bar ends
+  up with a black rectangle; the player now checks its own iframe is still in
+  the document and rebuilds if it is not.
+
+### The lineup
+
+`/admin/channels`, commissioner-only (gated on `isAuthed()` directly, like
+moderation and broadcast — the neighborhood is public, the lineup is Austin’s).
+Add, edit, reorder, switch a channel off without deleting it. Validation lives
+in `lib/neighborhood/channels.js` so the form and the route agree: a `tv` row
+must be a `tv.youtube.com` link, a `youtube` row must contain a video id.
+
+### What stops a forged channel change
+
+The same thing that stops a forged kick. `tv_channel` and `tv_mode` ride the
+gameplay topic, where RLS lets clients read and refuses every client publish,
+so the only writer is a validated route holding the service-role key. Tested
+with the site’s own public key: the broadcast endpoint accepts the POST and
+the room never sees it.
+
+The popup-live stamp is written ONLY by `/api/neighborhood/broadcast`, which
+404s anyone without the commissioner cookie — so "Austin is broadcasting
+YouTube TV, here is a remote" is not something a player can assert. And a
+request from a player standing in a room with no TV is refused `no_screen`:
+nobody changes the bar’s channel from the arcade.
+
+Muted players may still use the remote. Mute is the CHAT sanction; reaching
+for the remote is a gesture, like a tomato. A kick blocks everything.
+
+### Austin: getting the channel links
+
+**YouTube TV (for the popup broadcast).** Open `tv.youtube.com` in Chrome,
+click the channel you want to be able to jump to, and copy the address bar.
+They look like `https://tv.youtube.com/watch/XXXXXXXXXXX?vp=...`. Paste that
+whole thing into the YouTube TV list at `/admin/channels` with a name the room
+will recognise ("ESPN", "NFL Net", "RedZone"). Nothing here tries to
+understand the link — it gets loaded into the popup exactly as pasted, so
+whatever works when you paste it into a fresh tab is what will work for the
+room.
+
+**YouTube (for when you are not broadcasting).** A normal watch link, a
+`youtu.be` link, or a live link — anything with a video id in it. A channel’s
+`/@handle/live` page will be refused, because resolving one needs the YouTube
+Data API and a key this site does not have: open the stream itself and copy
+THAT address. Some videos refuse to be embedded at all; those show the room a
+"CHANNEL UNAVAILABLE" panel rather than a black hole, and you can switch them
+off in admin.
+
+### Austin: the popup broadcast, step by step
+
+1. Walk into **Mission Control** (the button only exists there, same as Share
+   My Screen, and only for you).
+2. Click **Broadcast YouTube TV**. A 1280x720 window opens on
+   `tv.youtube.com`, already signed in as you. If nothing opens, Chrome
+   blocked the popup — allow popups for this site and click again.
+3. Chrome’s share picker appears. Choose the **Chrome Tab** tab and pick the
+   **YouTube TV** entry (the new window). A tab share carries the tab’s AUDIO,
+   which a window share does not — so pick the tab, not the window, unless you
+   want a silent board.
+4. The board goes live for everyone, in Mission Control and the Sports Bar.
+   Your own preview stays muted on purpose; viewers tap the screen for sound.
+5. The room can now change the channel. When somebody does, your popup jumps to
+   that channel and a toast tells the room who did it. One change per 12
+   seconds, room-wide.
+6. **Leave the popup open.** Closing it ends the broadcast (there is nothing
+   left to capture or steer). Stop Sharing or **Stop YouTube TV** ends it
+   cleanly and the screens fall back to the last YouTube channel.
+
+### Known limits, honestly
+
+- Whether a `tv.youtube.com/watch/...` link jumps straight to that channel is
+  YouTube TV’s business, not ours. If one bounces to the home grid, the remote
+  still worked — the link needs replacing. Paste-test a link in a normal tab
+  before putting it in the lineup.
+- The popup has to stay open and the broadcasting tab has to stay awake. That
+  is the same constraint plain screen sharing always had.
+- The YouTube player shows YouTube’s own title bar and logo while paused.
+  `modestbranding` is mostly decorative these days and there is no supported
+  way to remove it.
+- Everything above is desktop-only for the BROADCASTER (`getDisplayMedia` does
+  not exist on phones). Watching, and working the remote, is fine on a phone —
+  that was the whole point.

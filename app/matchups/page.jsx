@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import MatchupBoard from "@/components/MatchupBoard";
+import YahooAttribution from "@/components/YahooAttribution";
 import { canSeeFantasy } from "@/lib/fantasyAccess";
 import { isPlaceholder } from "@/lib/fantasy";
 import { totalWeeks } from "@/lib/nfl";
@@ -12,9 +13,11 @@ export const metadata = { title: "Matchups" };
 export default async function MatchupsPage() {
   if (!(await canSeeFantasy())) notFound();
 
+  const placeholder = await isPlaceholder();
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-      {isPlaceholder() && (
+      {placeholder && (
         <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <strong>Preview.</strong> These names and scores are made up so the
           page can be built before the draft. Only you can see this.
@@ -37,6 +40,8 @@ export default async function MatchupsPage() {
       </p>
 
       <MatchupBoard initialWeek={1} totalWeeks={totalWeeks()} />
+
+      <YahooAttribution />
     </div>
   );
 }

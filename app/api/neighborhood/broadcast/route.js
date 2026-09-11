@@ -5,6 +5,10 @@ import {
   NONCE_RE,
   BROADCAST_ROOM_ID,
 } from "@/lib/neighborhood/broadcastGrant";
+import { getAdminClient } from "@/lib/supabase";
+import { SCREEN_ROOM_IDS } from "@/lib/neighborhood/rooms";
+import { broadcastToRoom } from "@/lib/neighborhood/multiplayerServer";
+import { TV_STATE_TABLE, TV_STATE_ID } from "@/lib/neighborhood/channels";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +81,52 @@ export async function POST(request) {
         { error: "The big board only lives in Mission Control.", code: "bad_room" },
         { status: 400 }
       );
+    }
+
+    // POPUP MODE (milestone 28). Austin's broadcasting tab
+    // says whether the thing on the board is a YouTube TV
+    // window IT opened — which is the only case where the
+    // room's remote can steer anything, because an opener may
+    // navigate a window it opened and nothing else may. The
+    // isAuthed() gate at the top of this handler is the whole
+    // authority: only the commissioner can claim a broadcast
+    // is live, and a stamp goes stale on its own if his laptop
+    // shuts, so the remote cannot outlive the show.
+    const popup = String((body && body.popup) || "");
+    if (popup === "live" || popup === "idle") {
+      const supabase = getAdminClient();
+      if (supabase) {
+        const stampedAt = Date.now();
+        await supabase
+          .from(TV_STATE_TABLE)
+          .update(
+            popup === "live"
+              ? {
+                  popup_by: playerId || "commissioner",
+                  popup_at: stampedAt,
+                  updated_at: new Date(stampedAt).toISOString(),
+                }
+              : {
+                  popup_by: null,
+                  popup_at: null,
+                  updated_at: new Date(stampedAt).toISOString(),
+                }
+          )
+          .eq("id", TV_STATE_ID);
+        // Tell both screen rooms, so the guide's channel
+        // buttons appear and disappear with the broadcast
+        // instead of waiting for a poll. Heartbeats pass
+        // `quiet` so a long night is one event, not hundreds.
+        if (!body.quiet) {
+          for (const screenRoom of SCREEN_ROOM_IDS) {
+            await broadcastToRoom(screenRoom, "tv_mode", {
+              popupLive: popup === "live",
+              at: stampedAt,
+            });
+          }
+        }
+      }
+      return NextResponse.json({ ok: true, popup, startedAt: Date.now() });
     }
 
     let grant = null;

@@ -130,6 +130,7 @@ import {
   screenViewSupported,
   relayAvailable,
 } from "@/lib/neighborhood/screenshare";
+import NeighborhoodTvGuide from "@/components/NeighborhoodTvGuide";
 
 const AVATAR_SCALE = 0.92; // world size of players in rooms
 const MIN_ZOOM = 0.55; // keep avatars readable on small phones
@@ -923,6 +924,16 @@ export default function NeighborhoodRoom({
   const [hd, setHd] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [theater, setTheater] = useState(false);
+  // The TV guide (milestone 28). The lineup, the YouTube
+  // player and the guide panel all live in
+  // NeighborhoodTvGuide; the room owns where that player and
+  // its remote sit on the wall, and whether a popup broadcast
+  // is this browser's to steer.
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [popupShare, setPopupShare] = useState(false);
+  const tvRef = useRef(null);
+  const ytBoxRef = useRef(null);
+  const remoteRef = useRef(null);
   const [viewers, setViewers] = useState(null);
   const videoRef = useRef(null);
   const videoBoxRef = useRef(null);
@@ -1154,6 +1165,7 @@ export default function NeighborhoodRoom({
           applyFeed("standby");
           attachStream(null);
           setViewers(null);
+          setPopupShare(false);
         }
       },
       onViewers: (info) => setViewers(info),
@@ -1594,6 +1606,199 @@ export default function NeighborhoodRoom({
     }
   }
 
+  // The room's half of a channel change: ask the server, and
+
+  // hand any refusal back to the guide so it can say why out
+
+  // loud. Nothing is applied locally — the change exists when
+
+  // the broadcast comes back, for everyone at once.
+
+  async function requestChannel(kind, channelId) {
+
+    const s = sRef.current;
+
+    if (!s.conn || !s.conn.changeChannel) {
+
+      return { error: "The remote is offline right now." };
+
+    }
+
+    try {
+
+      await s.conn.changeChannel(kind, channelId);
+
+      return { ok: true };
+
+    } catch (err) {
+
+      const data = (err && err.data) || {};
+
+      return {
+
+        error: (err && err.message) || "That didn't take.",
+
+        retryInMs: data.retryInMs || 0,
+
+        changedBy: data.changedBy || null,
+
+      };
+
+    }
+
+  }
+
+
+  // Point the YouTube TV popup at a channel. Only the browser
+
+  // that OPENED that window may navigate it, which is exactly
+
+  // why the request goes all the way to the server and comes
+
+  // back as a broadcast: every room hears it, and precisely
+
+  // one tab is able to act on it.
+
+  function tuneChannel(p) {
+
+    const sc = screenRef.current;
+
+    if (!sc || !sc.broadcaster || !sc.broadcaster.isPopupMode()) return;
+
+    if (!p || !p.url) return;
+
+    if (sc.broadcaster.tuneTo(p.url)) return;
+
+    // The window went away between the request and the
+
+    // broadcast. Say so, and take the board down rather than
+
+    // leave a picture nobody can change.
+
+    setToast({
+
+      text: "That YouTube TV window is gone — stopping the broadcast.",
+
+      id: performance.now(),
+
+    });
+
+    sc.broadcaster.stop();
+
+  }
+
+
+  // "Broadcast YouTube TV" (milestone 28). The popup has to be
+
+  // opened INSIDE this click — a window.open() after an await
+
+  // is a popup blocker's favourite meal — and then the
+
+  // ordinary capture flow runs with that window handed to it.
+
+  // Chrome still asks what to share: pick the YouTube TV
+
+  // window that just opened. Plain Share My Screen is
+
+  // untouched and still there.
+
+  async function togglePopupShare() {
+
+    const sc = screenRef.current;
+
+    if (!sc || !sc.broadcaster || shareBusy) return;
+
+    if (sc.broadcaster.isLive()) {
+
+      sc.broadcaster.stop();
+
+      return;
+
+    }
+
+    const win = window.open(
+
+      "https://tv.youtube.com/",
+
+      "hspn-youtube-tv",
+
+      "width=1280,height=720"
+
+    );
+
+    if (!win) {
+
+      setToast({
+
+        text: "Chrome blocked that window — allow popups for this site, then try again.",
+
+        id: performance.now(),
+
+      });
+
+      return;
+
+    }
+
+    setShareBusy(true);
+
+    setPopupShare(true);
+
+    try {
+
+      await sc.broadcaster.start({ hd, popup: win });
+
+    } catch (err) {
+
+      setPopupShare(false);
+
+      try {
+
+        win.close();
+
+      } catch {
+
+        // his window now
+
+      }
+
+      const name = err && err.name;
+
+      if (name === "NotAllowedError" || name === "AbortError") {
+
+        // picker dismissed — a normal cancel, not a failure
+
+      } else if (err && err.code === "not_admin") {
+
+        setToast({
+
+          text: "Only the commissioner can put a feed on the big board.",
+
+          id: performance.now(),
+
+        });
+
+      } else {
+
+        setToast({
+
+          text: "That share didn't start — give it another try.",
+
+          id: performance.now(),
+
+        });
+
+      }
+
+    } finally {
+
+      setShareBusy(false);
+
+    }
+
+  }
+
+
   function goFullscreen() {
     const v = videoRef.current;
     if (!v) return;
@@ -1903,6 +2108,21 @@ export default function NeighborhoodRoom({
           const vm = voiceRef.current;
           if (vm && vm.mesh) vm.mesh.dropPeer(p.id);
         }
+      },
+      // The TV guide (milestone 28). Server-published on the
+      // gameplay topic, so a forged channel change cannot exist.
+      // The guide renders it; if THIS browser is the one holding
+      // the YouTube TV popup, onTune (below) is what actually
+      // points that window at the channel.
+      onTvChannel: (p) => {
+        if (!live() || !p) return;
+        if (tvRef.current) tvRef.current.onTvChannel(p);
+      },
+      // A popup-mode broadcast started or stopped, which is what
+      // makes the remote appear at all.
+      onTvMode: (p) => {
+        if (!live() || !p) return;
+        if (tvRef.current) tvRef.current.onTvMode(p);
       },
       // Screen-share handshake (milestone 9) — hand every
       // rtc-* event to both peer roles; each ignores what
@@ -3134,6 +3354,100 @@ export default function NeighborhoodRoom({
         }
       }
 
+      // The YouTube channel (milestone 28). Same wall, same
+
+      // camera, same arithmetic as the <video> above — it just
+
+      // happens to be an iframe. Only one of the two is ever up:
+
+      // a live broadcast always wins the glass, so this hides
+
+      // itself the moment a feed arrives and comes back when it
+
+      // ends.
+
+      const ytBox = ytBoxRef.current;
+
+      if (ytBox) {
+
+        const ytScreen = screenRectFor(s.room.id);
+
+        const ytOn = !!(
+
+          tvRef.current &&
+
+          tvRef.current.isYouTubeUp &&
+
+          tvRef.current.isYouTubeUp()
+
+        );
+
+        if (s.feedOn || !ytScreen || !s.cam || !ytOn) {
+
+          if (ytBox.style.display !== "none") ytBox.style.display = "none";
+
+        } else if (theaterRef.current) {
+
+          ytBox.style.display = "block";
+
+          ytBox.style.width = "100%";
+
+          ytBox.style.height = "100%";
+
+          ytBox.style.transform = "none";
+
+        } else {
+
+          ytBox.style.display = "block";
+
+          ytBox.style.width = `${ytScreen.w}px`;
+
+          ytBox.style.height = `${ytScreen.h}px`;
+
+          const yx = (ytScreen.x - s.cam.x) * s.zoom;
+
+          const yy = (ytScreen.y - s.cam.y) * s.zoom;
+
+          ytBox.style.transform = `translate(${yx.toFixed(2)}px, ${yy.toFixed(2)}px) scale(${s.zoom.toFixed(4)})`;
+
+        }
+
+      }
+
+
+      // The remote, hanging on the wall beside the TV. Pinned the
+
+      // same way, so it rides the camera like painted scenery —
+
+      // and hidden in theater mode, where the guide has its own
+
+      // way in from the toolbar.
+
+      const remoteEl = remoteRef.current;
+
+      if (remoteEl) {
+
+        const rScreen = screenRectFor(s.room.id);
+
+        if (!rScreen || !s.cam || theaterRef.current) {
+
+          if (remoteEl.style.display !== "none") remoteEl.style.display = "none";
+
+        } else {
+
+          remoteEl.style.display = "block";
+
+          const rx = (rScreen.x + rScreen.w + 12 - s.cam.x) * s.zoom;
+
+          const ry = (rScreen.y + rScreen.h - 70 - s.cam.y) * s.zoom;
+
+          remoteEl.style.transform = `translate(${rx.toFixed(2)}px, ${ry.toFixed(2)}px) scale(${s.zoom.toFixed(4)})`;
+
+        }
+
+      }
+
+
       // Tomato splats on a big screen (milestone 13). The feed
       // is a DOM <video>, so a splat painted on the world
       // canvas would sit BEHIND the picture. This overlay
@@ -3968,6 +4282,16 @@ export default function NeighborhoodRoom({
             )}
           </button>
           )}
+          {roomHasScreen(roomId) && (
+            <button
+              type="button"
+              onClick={() => setGuideOpen((v) => !v)}
+              title="What's on the big screen"
+              className="min-h-[44px] rounded-md border border-espn px-3 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
+            >
+              TV Guide
+            </button>
+          )}
           {canBroadcast && roomId === BROADCAST_ROOM_ID && (
             <>
               <button
@@ -3990,6 +4314,19 @@ export default function NeighborhoodRoom({
                 }`}
               >
                 {sharing ? "Stop Sharing" : "Share My Screen"}
+              </button>
+              <button
+                type="button"
+                onClick={togglePopupShare}
+                disabled={shareBusy || (sharing && !popupShare)}
+                title="Open YouTube TV in a window this tab owns, then share that window"
+                className={`min-h-[44px] rounded-md border px-3 font-display text-xs uppercase tracking-widest transition-colors disabled:opacity-60 ${
+                  popupShare
+                    ? "border-red-600 bg-red-600 text-white"
+                    : "border-espn text-espn hover:bg-espn hover:text-white"
+                }`}
+              >
+                {popupShare ? "Stop YouTube TV" : "Broadcast YouTube TV"}
               </button>
             </>
           )}
@@ -4101,6 +4438,24 @@ export default function NeighborhoodRoom({
             pointerEvents: "none",
             zIndex: theater ? 16 : 6,
           }}
+        />
+        {/* The TV guide (milestone 28): the YouTube channel on the
+            glass, the remote hanging beside it, and the guide panel
+            itself. The first two are pinned by the rAF loop above,
+            exactly like the screen-share <video>. */}
+        <NeighborhoodTvGuide
+          ref={tvRef}
+          roomId={roomId}
+          hasScreen={roomHasScreen(roomId)}
+          boxRef={ytBoxRef}
+          remoteRef={remoteRef}
+          theater={theater}
+          feedLive={feed === "live"}
+          open={guideOpen}
+          onOpenChange={setGuideOpen}
+          onRequest={requestChannel}
+          onToggleTheater={() => setTheater((t) => !t)}
+          onTune={tuneChannel}
         />
         {/* The big red button's party (milestone 25). Covers
             the whole stage rather than the screen rect, one

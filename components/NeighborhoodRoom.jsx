@@ -3415,13 +3415,37 @@ export default function NeighborhoodRoom({
       }
 
 
-      // The remote, hanging on the wall beside the TV. Pinned the
+      // The remote, tucked under the bottom-left corner of the TV.
 
-      // same way, so it rides the camera like painted scenery —
 
-      // and hidden in theater mode, where the guide has its own
+      // Pinned the same way, so it rides the camera like painted
 
-      // way in from the toolbar.
+
+      // scenery — and hidden in theater mode, where the guide has
+
+
+      // its own way in from the toolbar.
+
+
+      //
+
+
+      // IT SITS LEFT, NOT RIGHT, ON PURPOSE. Hanging beside the
+
+
+      // right edge put it exactly on top of the Sports Bar's
+
+
+      // restroom door, and a DOM button always wins a click
+
+
+      // against a canvas hotspot — so the door stopped answering.
+
+
+      // Under the near corner there is wall in both screen rooms
+
+
+      // and nothing to swallow.
 
       const remoteEl = remoteRef.current;
 
@@ -3437,9 +3461,9 @@ export default function NeighborhoodRoom({
 
           remoteEl.style.display = "block";
 
-          const rx = (rScreen.x + rScreen.w + 12 - s.cam.x) * s.zoom;
+          const rx = (rScreen.x + 6 - s.cam.x) * s.zoom;
 
-          const ry = (rScreen.y + rScreen.h - 70 - s.cam.y) * s.zoom;
+          const ry = (rScreen.y + rScreen.h + 8 - s.cam.y) * s.zoom;
 
           remoteEl.style.transform = `translate(${rx.toFixed(2)}px, ${ry.toFixed(2)}px) scale(${s.zoom.toFixed(4)})`;
 

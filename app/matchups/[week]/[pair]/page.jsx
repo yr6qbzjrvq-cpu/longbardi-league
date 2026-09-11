@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import YahooAttribution from "@/components/YahooAttribution";
 import { canSeeFantasy } from "@/lib/fantasyAccess";
 import { getMatchup, isPlaceholder, statLine } from "@/lib/fantasy";
 
@@ -89,12 +90,15 @@ export default async function MatchupDetailPage({ params }) {
   const weekNumber = Number(week);
   if (!weekNumber || weekNumber < 1 || weekNumber > 18) notFound();
 
-  const matchup = await getMatchup(weekNumber, pair);
+  const [matchup, placeholder] = await Promise.all([
+    getMatchup(weekNumber, pair),
+    isPlaceholder(),
+  ]);
   if (!matchup) notFound();
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      {isPlaceholder() && (
+      {placeholder && (
         <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <strong>Preview.</strong> These players, points and stats are made up.
           Only you can see this.
@@ -124,6 +128,8 @@ export default async function MatchupDetailPage({ params }) {
         <TeamColumn side={matchup.away} />
         <TeamColumn side={matchup.home} />
       </div>
+
+      <YahooAttribution />
     </div>
   );
 }

@@ -2061,3 +2061,46 @@ off in admin.
 - Everything above is desktop-only for the BROADCASTER (`getDisplayMedia` does
   not exist on phones). Watching, and working the remote, is fine on a phone —
   that was the whole point.
+
+## The dartboard bullseye (milestone 29)
+
+Austin's ask: "Make it so if you throw a tomato at the dart board confetti
+falls down".
+
+Land a tomato inside the Sports Bar dartboard — the circle on the left wall,
+under the #27 and #23 jerseys — and the board takes a short wobble on its nail
+and throws a two-and-a-half second burst of confetti that falls down the wall.
+The splat still sticks exactly as it always did; miss the board and you just
+get the splat. Everyone standing in the bar sees the same burst at the same
+moment.
+
+### Why there is no server piece
+
+A tomato already reaches every client as one small broadcast record — origin,
+target, start time, flight time — and the landing point is derived from it by
+the shared module in `lib/neighborhood/tomatoes.js`. The landing point is
+therefore identical in every browser, which means "did that one land in the
+board?" is a pure function of data everybody already has.
+`lib/neighborhood/dartboard.js` runs that test locally in every client, on the
+same frame the splat is created.
+
+Nothing new goes on the wire and no client publishes anything new: the
+gameplay topic stays server-write-only, exactly as it was. This is the same
+determinism the splat art already rides on, where the shape, the flecks and
+the seeds are hashed from the throw id rather than sent.
+
+### Why nothing lingers
+
+A burst is a pure function of (landing time, `Date.now()`) — no per-frame
+integration, no accumulating state. It is stamped with the moment the tomato
+LANDED, not the moment a tab got around to noticing, so a tab whose rAF was
+frozen while hidden comes back, finds the burst already expired against the
+wall clock and draws nothing at all. Bursts are dropped on a room change and
+capped at three at once, and the wobble re-stamps one 68x68 patch of the
+cached room background rather than re-painting the art — so the dartboard
+keeps its single definition in `rooms.js` and an idle frame pays nothing.
+
+The confetti is party.js's own art, reused piece for piece — same palette,
+same rectangles, ribbons and rounds, same tumble — just re-aimed into world
+pixels off the board face. No music and no disco: that is still the big red
+button's job.

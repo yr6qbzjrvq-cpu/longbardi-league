@@ -1,11 +1,18 @@
-import { TEAMS, LEAGUE } from "@/lib/leagueData";
+import { LEAGUE } from "@/lib/leagueData";
+import { getStandings } from "@/lib/fantasy";
 
 export const metadata = { title: "Standings of Heroes" };
 
+// Dynamic so the Ministry of Records reports the same numbers as the rest
+// of the site once Yahoo is connected. (The Commissioner's own record
+// remains, as ever, a matter of doctrine rather than data.)
+export const dynamic = "force-dynamic";
+
 const TROPHY_YEARS = [2021, 2022, 2023, 2024, 2025, 2026];
 
-export default function StandingsOfHeroes() {
-  const others = TEAMS.filter((t) => t.team !== "Austin");
+export default async function StandingsOfHeroes() {
+  const { rows } = await getStandings();
+  const others = rows.filter((t) => t.team !== "Austin");
 
   return (
     <div>
@@ -53,7 +60,7 @@ export default function StandingsOfHeroes() {
             </tr>
             {others.map((t, i) => (
               <tr
-                key={t.team}
+                key={t.teamKey || t.team}
                 style={{ background: i % 2 ? "#f0f0f0" : "#ffffff" }}
               >
                 <td>{i + 2}</td>

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import YahooAttribution from "@/components/YahooAttribution";
 import { canSeeFantasy } from "@/lib/fantasyAccess";
 import { getRosters, isPlaceholder } from "@/lib/fantasy";
 
@@ -27,11 +28,14 @@ function Row({ player }) {
 export default async function TeamsPage() {
   if (!(await canSeeFantasy())) notFound();
 
-  const rosters = await getRosters(1);
+  const [rosters, placeholder] = await Promise.all([
+    getRosters(1),
+    isPlaceholder(),
+  ]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      {isPlaceholder() && (
+      {placeholder && (
         <div className="mb-6 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <strong>Preview.</strong> These rosters are made up so the page can be
           built before the draft. Only you can see this.
@@ -83,6 +87,8 @@ export default async function TeamsPage() {
           </section>
         ))}
       </div>
+
+      <YahooAttribution />
     </div>
   );
 }

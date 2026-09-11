@@ -480,7 +480,7 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
           style={{ cursor: "pointer", touchAction: "none" }}
         />
         {(ytFailed || apiDead) && (
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/80 px-4 text-center">
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/95 px-4 text-center">
             <span className="font-display text-lg uppercase tracking-widest text-white">
               Channel unavailable
             </span>

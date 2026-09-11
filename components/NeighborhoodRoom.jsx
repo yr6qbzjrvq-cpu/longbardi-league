@@ -1799,6 +1799,49 @@ export default function NeighborhoodRoom({
   }
 
 
+  // A tomato aimed at the YouTube channel. The guide calls
+
+
+  // this FIRST on every tap of the channel glass; if we are
+
+
+  // armed we take the tap and throw, otherwise we hand it back
+
+
+  // and the tap means sound/theater as usual. The spot is
+
+
+  // measured off the splat overlay, which is pinned to the same
+
+
+  // rect whether the glass is showing a feed, a channel or
+
+
+  // nothing at all.
+
+
+  function tvArmedTap(e) {
+
+
+    if (!armedRef.current) return false;
+
+
+    setArmed(false);
+
+
+    const u = screenUnitFromEvent(e);
+
+
+    if (u) sendThrow({ kind: "screen", sx: u.sx, sy: u.sy });
+
+
+    return true;
+
+
+  }
+
+
+
   function goFullscreen() {
     const v = videoRef.current;
     if (!v) return;
@@ -4480,6 +4523,7 @@ export default function NeighborhoodRoom({
           onRequest={requestChannel}
           onToggleTheater={() => setTheater((t) => !t)}
           onTune={tuneChannel}
+          onArmedTap={tvArmedTap}
         />
         {/* The big red button's party (milestone 25). Covers
             the whole stage rather than the screen rect, one

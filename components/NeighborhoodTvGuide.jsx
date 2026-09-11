@@ -139,6 +139,27 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
   offsetRef.current = offset;
   soundRef.current = soundOn;
 
+  // Chrome will not START a video in a hidden tab, and never
+  // retries on its own once the tab comes back — the same trap
+  // the screen-share <video> hits on iOS, and the reason that one
+  // asks to play twelve times. A TV that is dark when you look
+  // back at it is worse than no TV, so nudge the player whenever
+  // the page becomes visible and once a beat while a channel is
+  // supposed to be on. Muted stays muted: this only ever asks for
+  // a picture, never for sound.
+  function nudgePlayer() {
+    const p = playerRef.current;
+    if (!p || typeof p.playVideo !== "function") return;
+    try {
+      if (!soundRef.current && p.mute) p.mute();
+      const st = typeof p.getPlayerState === "function" ? p.getPlayerState() : null;
+      // 1 = playing, 3 = buffering. Both are fine; leave them be.
+      if (st !== 1 && st !== 3) p.playVideo();
+    } catch {
+      // a player that refuses shows the panel below
+    }
+  }
+
   // The kind of channel the room may ask for right now. Popup
   // mode means Austin's own window is on the board and the
   // remote drives IT; otherwise the screens are ours.
@@ -339,12 +360,25 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
     return undefined;
   }, [youtubeUp]);
 
+  // Coming back to the tab: the channel should already be on.
+  useEffect(() => {
+    if (!youtubeUp) return undefined;
+    const onVis = () => {
+      if (document.visibilityState === "visible") nudgePlayer();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    onVis();
+    return () => document.removeEventListener("visibilitychange", onVis);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeUp, wantedKey]);
+
   // Drift correction. Live streams are skipped entirely: every
   // player is already at the live edge and a seek would only
   // push somebody into the past.
   useEffect(() => {
     if (!youtubeUp) return undefined;
     const t = setInterval(() => {
+      nudgePlayer();
       const p = playerRef.current;
       const want = wantRef.current;
       if (!p || !want || !want.startedAt || !p.getDuration) return;

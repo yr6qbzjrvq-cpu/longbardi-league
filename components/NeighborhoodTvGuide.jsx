@@ -115,6 +115,7 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
     onRequest,
     onToggleTheater,
     onTune,
+    onArmedTap,
   },
   ref
 ) {
@@ -425,6 +426,15 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
   // theater.
   function tapPicture(e) {
     e.stopPropagation();
+    // A tomato beats the remote. Armed, a tap on this glass is a
+    // throw AT THE SCREEN — exactly as it is on a live feed — so
+    // it goes back to the room, which owns aiming and throwing.
+    // Without this the channel quietly ate every tomato aimed at
+    // the TV, because a DOM tap surface sits over the canvas.
+    if (onArmedTap && onArmedTap(e)) {
+      e.preventDefault();
+      return;
+    }
     if (!soundOn) {
       const p = playerRef.current;
       try {

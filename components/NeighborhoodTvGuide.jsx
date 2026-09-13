@@ -475,6 +475,24 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
   const guideCanTune = popupUp ? list.length > 0 : list.length > 0 && !feedLive;
   const blockedReason = feedLive && !popupUp ? "Austin's feed is on the board." : null;
 
+  // WHY THE GUIDE IS EMPTY, HONESTLY. An empty list has three
+  // different causes and they used to look identical, which is
+  // how "the broadcast isn't working" becomes "no channels in
+  // the lineup yet" and nobody can tell what to do about it.
+  //
+  // The one that actually bites: the lineup is full of YouTube
+  // TV channels, but a tv channel is only offerable while
+  // Austin's popup broadcast is stamped live — so the guide
+  // silently falls back to the YouTube list, finds it empty,
+  // and reports a lineup problem for what is really a "nobody
+  // is broadcasting" situation. Say which one it is.
+  const tvCount = (lineup.tv || []).length;
+  const emptyReason = popupUp
+    ? "No YouTube TV channels in the lineup yet — add some on the commissioner's TV Channels page."
+    : tvCount > 0
+      ? `Nothing to put on right now. The ${tvCount} YouTube TV channel${tvCount === 1 ? "" : "s"} in the lineup only work while Austin is broadcasting his YouTube TV window.`
+      : "No channels in the lineup yet — add some on the commissioner's TV Channels page.";
+
   return (
     <>
       {/* The YouTube channel. Pinned to the screen rect by the
@@ -636,9 +654,7 @@ const NeighborhoodTvGuide = forwardRef(function NeighborhoodTvGuide(
               })}
               {list.length === 0 && (
                 <p className="rounded-md border border-dashed border-gray-300 px-3 py-6 text-center text-xs text-gray-500 dark:border-gray-600 dark:text-gray-400">
-                  {popupUp
-                    ? "No YouTube TV channels in the lineup yet."
-                    : "No channels in the lineup yet."}
+                  {emptyReason}
                 </p>
               )}
             </div>

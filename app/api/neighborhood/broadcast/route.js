@@ -7,7 +7,12 @@ import {
 } from "@/lib/neighborhood/broadcastGrant";
 import { getAdminClient } from "@/lib/supabase";
 import { SCREEN_ROOM_IDS } from "@/lib/neighborhood/rooms";
-import { broadcastToRoom } from "@/lib/neighborhood/multiplayerServer";
+import {
+  broadcastToRoom,
+  TABLE as PLAYERS_TABLE,
+  PLAYER_ID_RE,
+  noBanFilter,
+} from "@/lib/neighborhood/multiplayerServer";
 import { TV_STATE_TABLE, TV_STATE_ID } from "@/lib/neighborhood/channels";
 
 export const dynamic = "force-dynamic";
@@ -54,6 +59,35 @@ export const dynamic = "force-dynamic";
 // ============================================================
 
 const ROOM_ID = BROADCAST_ROOM_ID;
+
+// BROADCASTING IS ITSELF PROOF OF LIFE (the background prune
+// fix). A broadcaster's game tab is hidden for the whole show
+// — that is what sharing a screen means — so its heartbeat
+// timer is throttled and its player row was being pruned mid
+// broadcast: the character vanished for everyone and the feed
+// went with it.
+//
+// The popup stamp arrives on this route every
+// POPUP_HEARTBEAT_MS from the same tab, so it is already a
+// perfectly good liveness signal; it just was not being spent
+// as one. Bumping last_seen here means that for as long as a
+// broadcast is provably live, the broadcaster cannot go stale,
+// whatever Chrome does to its timers. Same write the heartbeat
+// route makes, and it deliberately respects the ban filter so
+// this can never resurrect a kicked row.
+async function touchPlayer(supabase, playerId) {
+  if (!supabase || !playerId || !PLAYER_ID_RE.test(playerId)) return;
+  try {
+    await supabase
+      .from(PLAYERS_TABLE)
+      .update({ last_seen: new Date().toISOString() })
+      .eq("id", playerId)
+      .or(noBanFilter());
+  } catch {
+    // Liveness is best-effort: a failed bump costs one beat,
+    // and never the broadcast.
+  }
+}
 
 function notFound() {
   return NextResponse.json({ error: "Not found." }, { status: 404 });
@@ -113,6 +147,8 @@ export async function POST(request) {
                 }
           )
           .eq("id", TV_STATE_ID);
+        // The stamp doubles as the broadcaster's heartbeat.
+        if (popup === "live") await touchPlayer(supabase, playerId);
         // Tell both screen rooms, so the guide's channel
         // buttons appear and disappear with the broadcast
         // instead of waiting for a poll. Heartbeats pass

@@ -64,15 +64,46 @@ export default function Comments({ threadKey }) {
     if (!supabase) return;
     setSaving(true);
     setError("");
-    const { error: err } = await supabase.from("comments").insert({
-      thread_key: threadKey,
-      name: name.trim().slice(0, 40),
-      body: body.trim().slice(0, 2000),
-    });
-    if (err) {
-      setError("Could not post that. Try again.");
-      setSaving(false);
-      return;
+    const cleanName = name.trim().slice(0, 40);
+    const rawBody = body.trim();
+    const low = rawBody.toLowerCase();
+    // "/sudo " prefix = commissioner's privilege: route the comment through the
+    // server, which drops the mandated sign-off -- but only for a valid admin
+    // session. For anyone else the token is stripped and the comment posts
+    // normally, sign-off included.
+    const isSudo = low === "/sudo" || low.startsWith("/sudo ");
+    if (isSudo) {
+      const plainBody = rawBody.slice(5).trim().slice(0, 2000);
+      if (!plainBody) {
+        setError("Could not post that. Try again.");
+        setSaving(false);
+        return;
+      }
+      const res = await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          thread_key: threadKey,
+          name: cleanName,
+          body: plainBody,
+        }),
+      });
+      if (!res.ok) {
+        setError("Could not post that. Try again.");
+        setSaving(false);
+        return;
+      }
+    } else {
+      const { error: err } = await supabase.from("comments").insert({
+        thread_key: threadKey,
+        name: cleanName,
+        body: body.trim().slice(0, 2000),
+      });
+      if (err) {
+        setError("Could not post that. Try again.");
+        setSaving(false);
+        return;
+      }
     }
     try {
       window.localStorage.setItem("hspn_chat_name", name.trim());
@@ -100,7 +131,7 @@ export default function Comments({ threadKey }) {
           </p>
         )}
         {comments.map((c) => {
-          const bodyText = withSignoff(c.body);
+          const bodyText = c.no_signoff ? c.body : withSignoff(c.body);
           return (
             <div key={c.id} className="py-3">
               <p className="text-sm">

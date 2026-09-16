@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import ArticleBody from "@/components/ArticleBody";
 
 const IMAGE_THEMES = [
   "eating", "office", "driving", "sports", "beehive",
@@ -118,7 +117,10 @@ export default function ArticleEditor({ article = null }) {
       <div>
         <div className="mb-2 flex items-center justify-between">
           <label className="font-display text-xs font-semibold uppercase tracking-widest text-gray-500">
-            Body (Markdown)
+            Body (Markdown){" "}
+            <span className="normal-case text-gray-400">
+              — paste an image URL on its own line to embed a picture
+            </span>
           </label>
           <div className="flex overflow-hidden rounded-md border border-gray-300 text-xs font-semibold uppercase tracking-wider">
             <button
@@ -157,9 +159,7 @@ export default function ArticleEditor({ article = null }) {
         ) : (
           <div className="article-body min-h-[24rem] rounded-md border border-gray-300 bg-white px-5 py-4">
             {content ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {content}
-              </ReactMarkdown>
+              <ArticleBody content={content} />
             ) : (
               <p className="text-gray-400">Nothing to preview yet.</p>
             )}

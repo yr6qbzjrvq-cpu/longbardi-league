@@ -1,51 +1,45 @@
 "use client";
 
-import { useState } from "react";
-
-const MAX_EDGE = 1600;
-
-// Shrink in the browser so a phone photo doesn't travel full size.
-async function shrink(file) {
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-    if (scale === 1 && file.size < 400_000) return file;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.85)
-    );
-    if (!blob) return file;
-    return new File([blob], "image.jpg", { type: "image/jpeg" });
-  } catch {
-    return file;
-  }
-}
+import { useRef, useState } from "react";
+import ImageCropper from "@/components/ImageCropper";
 
 export default function ImageUploadForm() {
-  const [state, setState] = useState("idle");
+  const inputRef = useRef(null);
+  const [state, setState] = useState("idle"); // idle | cropping | working | done
+  const [pending, setPending] = useState(null); // File waiting to be cropped
   const [error, setError] = useState("");
   const [url, setUrl] = useState("");
   const [copied, setCopied] = useState(false);
 
-  async function onPick(event) {
+  function resetInput() {
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function onPick(event) {
     const picked = event.target.files?.[0];
     if (!picked) return;
 
-    setState("working");
     setError("");
     setUrl("");
     setCopied(false);
 
-    try {
-      const file = await shrink(picked);
+    // Animated GIFs can't survive a canvas crop, so upload them untouched.
+    if (picked.type === "image/gif") {
+      uploadFile(picked);
+      resetInput();
+      return;
+    }
 
+    // Everything else gets the crop step first.
+    setPending(picked);
+    setState("cropping");
+  }
+
+  async function uploadFile(file) {
+    setState("working");
+    setError("");
+
+    try {
       const res = await fetch("/api/admin/uploads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -77,13 +71,16 @@ export default function ImageUploadForm() {
     }
   }
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
+  function onCropConfirm(croppedFile) {
+    setPending(null);
+    resetInput();
+    uploadFile(croppedFile);
+  }
+
+  function onCropCancel() {
+    setPending(null);
+    resetInput();
+    setState("idle");
   }
 
   return (
@@ -91,13 +88,23 @@ export default function ImageUploadForm() {
       <label className="inline-block cursor-pointer rounded-md bg-espn px-6 py-2 font-display uppercase tracking-widest text-white transition-colors hover:bg-espn-dark">
         {state === "working" ? "Uploading..." : "Choose image"}
         <input
+          ref={inputRef}
           type="file"
           accept="image/*"
           onChange={onPick}
-          disabled={state === "working"}
+          disabled={state === "working" || state === "cropping"}
           className="hidden"
         />
       </label>
+
+      {state === "cropping" && pending && (
+        <ImageCropper
+          file={pending}
+          initialAspect="16:9"
+          onConfirm={onCropConfirm}
+          onCancel={onCropCancel}
+        />
+      )}
 
       {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
 
@@ -115,7 +122,14 @@ export default function ImageUploadForm() {
             />
             <button
               type="button"
-              onClick={copy}
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(url);
+                  setCopied(true);
+                } catch {
+                  setCopied(false);
+                }
+              }}
               className="rounded-md border border-espn px-4 py-2 font-display text-xs uppercase tracking-widest text-espn transition-colors hover:bg-espn hover:text-white"
             >
               {copied ? "Copied" : "Copy"}

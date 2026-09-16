@@ -47,7 +47,7 @@ body {
   @apply border-l-4 border-espn pl-4 italic text-gray-500 my-6;
 }
 .article-body img {
-  @apply rounded-lg my-6;
+  @apply block mx-auto max-w-full h-auto rounded-lg my-6;
 }
 .article-body hr {
   @apply border-gray-200 my-8;

@@ -14,12 +14,20 @@ const supabase = getClient();
 
 const COMMISSIONER_SIGNOFF = "Glory to our great commissioner";
 
-// Every comment is displayed with the mandated sign-off as its final line.
+// Every comment is displayed with the mandated sign-off appended inline to its body.
 // Done purely at render time -- the stored comment text is never modified.
 // Strip any trailing copy the commenter may have typed so it never doubles.
 function stripSignoff(text) {
   const raw = (text || "").replace(/\s+$/, "");
   return raw.replace(/glory to our great commissioner[.!\s]*$/i, "").replace(/\s+$/, "");
+}
+
+function withSignoff(text) {
+  const base = stripSignoff(text);
+  if (!base) return COMMISSIONER_SIGNOFF;
+  return /[.!?]$/.test(base)
+    ? `${base} ${COMMISSIONER_SIGNOFF}`
+    : `${base}. ${COMMISSIONER_SIGNOFF}`;
 }
 
 export default function Comments({ threadKey }) {
@@ -92,7 +100,7 @@ export default function Comments({ threadKey }) {
           </p>
         )}
         {comments.map((c) => {
-          const bodyText = stripSignoff(c.body);
+          const bodyText = withSignoff(c.body);
           return (
             <div key={c.id} className="py-3">
               <p className="text-sm">
@@ -113,9 +121,6 @@ export default function Comments({ threadKey }) {
                   {bodyText}
                 </p>
               )}
-              <p className="mt-1 whitespace-pre-wrap break-words text-sm italic text-espn">
-                {COMMISSIONER_SIGNOFF}
-              </p>
             </div>
           );
         })}

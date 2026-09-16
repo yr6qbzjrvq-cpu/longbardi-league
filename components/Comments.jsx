@@ -12,6 +12,16 @@ function getClient() {
 
 const supabase = getClient();
 
+const COMMISSIONER_SIGNOFF = "Glory to our great commissioner";
+
+// Every comment is displayed with the mandated sign-off as its final line.
+// Done purely at render time -- the stored comment text is never modified.
+// Strip any trailing copy the commenter may have typed so it never doubles.
+function stripSignoff(text) {
+  const raw = (text || "").replace(/\s+$/, "");
+  return raw.replace(/glory to our great commissioner[.!\s]*$/i, "").replace(/\s+$/, "");
+}
+
 export default function Comments({ threadKey }) {
   const [comments, setComments] = useState([]);
   const [name, setName] = useState("");
@@ -81,26 +91,34 @@ export default function Comments({ threadKey }) {
             No comments yet. Be the first.
           </p>
         )}
-        {comments.map((c) => (
-          <div key={c.id} className="py-3">
-            <p className="text-sm">
-              <span className="font-semibold text-espn">{c.name}</span>
-              <span className="ml-2 text-xs text-gray-400">
-                {new Date(c.created_at).toLocaleDateString("en-US", {
-                  month: "short",
-                  day: "numeric",
-                })}{" "}
-                {new Date(c.created_at).toLocaleTimeString("en-US", {
-                  hour: "numeric",
-                  minute: "2-digit",
-                })}
-              </span>
-            </p>
-            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-800">
-              {c.body}
-            </p>
-          </div>
-        ))}
+        {comments.map((c) => {
+          const bodyText = stripSignoff(c.body);
+          return (
+            <div key={c.id} className="py-3">
+              <p className="text-sm">
+                <span className="font-semibold text-espn">{c.name}</span>
+                <span className="ml-2 text-xs text-gray-400">
+                  {new Date(c.created_at).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })}{" "}
+                  {new Date(c.created_at).toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </p>
+              {bodyText && (
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-800">
+                  {bodyText}
+                </p>
+              )}
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm italic text-espn">
+                {COMMISSIONER_SIGNOFF}
+              </p>
+            </div>
+          );
+        })}
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-2">

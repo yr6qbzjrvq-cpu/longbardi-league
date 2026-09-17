@@ -1686,44 +1686,54 @@ trail**: mute and kick are live controls, not evidence collection.
 - Per-pair grants cost a couple of fetches per join; fine at league scale,
   another thing an SFU would flatten.
 
-## The mural (milestone 23)
+## The back-wall photos (milestone 30, replacing the mural)
 
-The back wall of the **Casino** floor now has a painting on it: three wolves
-howling at an enormous full moon, in a thin gold frame, roughly 590×214 of the
-900-wide room. It is deliberately, aggressively out of style. Every other thing
-in this world is a flat vector shape with a slightly darker outline; the mural
-is airbrushed — stacked radial and linear gradients, a 260-star field with
-glare crosses on the bright ones, cloud banks that pick up the moonlight as
-they pass it, a lake with a broken reflection, ground fog, and several thousand
-individual strokes of fur. Nobody in the room acknowledges it.
+The back wall of the **Casino** floor used to hold a wolf mural (milestone 23):
+three wolves howling at a full moon, airbrushed, deliberately out of style. It
+is **gone**. Austin's ask was to take it down and hang three real photographs
+there instead — small framed pictures you can tap to see full size.
 
-The joke only works if the rendering is genuinely harder than its
-surroundings, so the wolves are built the slow way. Each one is a bezier
-outline flattened to a dense polygon first, because the silhouette is what
-gives a vector shape away: every ~1.2 units of arc length along that polygon
-gets a hair planted pointing outward, so the coat ends up ragged instead of
-smooth. Inside the clip it is four passes — broad soft clumps for light and
-shade, the hair itself, the guard hairs the moon actually catches, and a rim
-light that is stroked *from inside* the clip so the edge glows rather than
-being outlined. The two on the ridge get a `haze` factor that pushes their
-darks and lights toward the sky colour, which is what distance looks like.
+What is on the wall now: **three framed portrait photos**, evenly spaced across
+the wall to the right of the cashier cage, each a chunky gilt frame (house
+flat-fill + soft-outline style) around a photo. They are ordinary wall art —
+they live above `FLOOR_WALL_Y`, so depth sorting, pathing, the seats, the slots
+and the blackjack route are all unaware of them.
 
-**It costs nothing to run.** `drawWolfMural` is called only from
-`drawFloorBackground`, and room backgrounds are painted once per
-(theme, zoom) into an offscreen canvas by `ensureBg()` in the room engine and
-blitted from then on. The whole casino background, mural included, builds in
-roughly 20–30ms and is then free every frame. Everything in it is deterministic
-— a seeded mulberry32 RNG, no `t` — so a cache rebuild on a resize or a theme
-flip repaints the identical picture instead of reshuffling the stars.
+**How they are drawn.** Unlike everything else in this world, these are not
+procedural vector art — they are real image files. The three thumbnails are
+served as static assets from `public/neighborhood/` (`photoN_thumb.webp`) and
+drawn into the canvas by `drawPhotoFrame` in `lib/neighborhood/rooms.js`. They
+are drawn as normal depth-sorted **props** (not baked into the cached
+background) on purpose: an `<img>` loads asynchronously, and a prop redraws
+every frame, so each photo appears the instant its bytes arrive with no cache
+rebuild. The `Image` objects are created lazily and cached module-side, and
+only ever on the client — `drawPhotoFrame` never runs in the join/moderation
+API that also imports `rooms.js` (there is a `typeof Image` guard for safety).
 
-It is wall art and nothing else: it lives entirely above `FLOOR_WALL_Y`, it is
-not a prop, and it has no footprint. Depth sorting, pathing, the seats, the
-slots, the blackjack route and chat are all unaware of it. A tomato thrown at
-the mural still splats on the mural and fades, which is correct and funny.
+**Tap to enlarge.** Each frame is a tap hotspot (`CASINO_FLOOR.photos`, read by
+the tap handler in `components/NeighborhoodRoom.jsx`). Tapping one opens a
+lightbox — `PhotoOverlay`, a `fixed inset-0` overlay modelled on the keypad
+overlay — showing the full-size image (`photoN_full.webp`) centered and
+letterboxed to fit the viewport. Close with the corner ✕ (44px target), a tap
+on the backdrop, or the Escape key. It is a purely local overlay: nobody else
+sees your lightbox, the room keeps running underneath, and multiplayer is
+unaffected. The photos are portrait (~1050×1400); on a phone the lightbox fills
+the height and never overflows the width.
 
-The only other change on that wall: the neon strip used to run its full width
-and now stops short of the frame with a rounded end, so the painting is not
-sitting on top of a cut-off tube light.
+**Swapping a photo later.** Replace the matching file(s) in
+`public/neighborhood/` and commit — the geometry stays the same:
+
+- `photoN_thumb.webp` — the small version that loads on the wall (keep it
+  small; all three thumbs together are what load on room entry).
+- `photoN_full.webp` — the big version the lightbox opens on tap.
+
+Keep the portrait ~3:4 shape (the frames are cut portrait). To move or resize
+the frames, edit `PHOTO_FRAMES` at the top of the photo-frame block in
+`rooms.js` (each entry's `rect` is the frame's outer rectangle in wall space);
+the props and tap hotspots both read from that one array.
+
+The neon strip along the wall, which the mural had truncated with a rounded
+end, now runs the full width of the wall again.
 
 ## The big red button (milestone 25)
 

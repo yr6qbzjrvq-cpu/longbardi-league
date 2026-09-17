@@ -1693,14 +1693,23 @@ three wolves howling at a full moon, airbrushed, deliberately out of style. It
 is **gone**. Austin's ask was to take it down and hang three real photographs
 there instead — small framed pictures you can tap to see full size.
 
-What is on the wall now: **three framed portrait photos**, evenly spaced across
+What is on the wall now: **four framed portrait photos**, evenly spaced across
 the wall to the right of the cashier cage, each a chunky gilt frame (house
 flat-fill + soft-outline style) around a photo. They are ordinary wall art —
 they live above `FLOOR_WALL_Y`, so depth sorting, pathing, the seats, the slots
 and the blackjack route are all unaware of them.
 
+**Update (milestone 31): four photos.** The wall now holds **four** framed
+portrait photos (was three), replaced with four new portraits shown left to
+right as `photo1` -> `photo4` (`photoN_thumb.webp` / `photoN_full.webp` in
+`public/neighborhood/`). To fit four cleanly between the cashier cage and the
+right wall the frames were re-spaced and slightly resized (120x154, centers at
+x 339 / 481 / 623 / 765). `PHOTO_FRAMES` and the matching props in `rooms.js`
+both carry four entries now; the tap/lightbox handler is generic (it iterates
+`CASINO_FLOOR.photos`), so no per-frame wiring changed in `NeighborhoodRoom.jsx`.
+
 **How they are drawn.** Unlike everything else in this world, these are not
-procedural vector art — they are real image files. The three thumbnails are
+procedural vector art — they are real image files. The four thumbnails are
 served as static assets from `public/neighborhood/` (`photoN_thumb.webp`) and
 drawn into the canvas by `drawPhotoFrame` in `lib/neighborhood/rooms.js`. They
 are drawn as normal depth-sorted **props** (not baked into the cached

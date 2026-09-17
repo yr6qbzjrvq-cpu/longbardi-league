@@ -670,6 +670,52 @@ function drawScene(ctx, canvas, s, theme, t) {
   }
 }
 
+// ---- photo lightbox (milestone 30) -------------------------
+// Tapping one of the three framed photos on the casino's back
+// wall opens the full-size image here: centered and letterboxed
+// to fit the viewport. The photos are portrait (~1050x1400), so
+// on a phone they fill the height and never overflow the width.
+// Close with the corner button, a tap on the backdrop, or the
+// Escape key. It is a purely local overlay — nobody else sees
+// your lightbox, and the room keeps running underneath.
+function PhotoOverlay({ src, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Photo"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <img
+        src={src}
+        alt="Casino wall photo"
+        className="max-h-[88vh] max-w-[92vw] rounded-lg border-4 border-white/90 object-contain shadow-2xl"
+        draggable={false}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close photo"
+        className="absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full border border-white/40 bg-black/60 text-lg text-white shadow-lg transition hover:bg-black/80"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 // ---- keypad overlay (milestone 8) --------------------------
 // Full-screen number pad for coded doors. The expected code
 // comes from the room config (`interact[].code`) — client-side
@@ -838,6 +884,7 @@ export default function NeighborhoodRoom({
   const [chatDraft, setChatDraft] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [keypad, setKeypad] = useState(null); // open keypad interact config (milestone 8)
+  const [photo, setPhoto] = useState(null); // open photo lightbox {full,id} (milestone 30)
   // Milestone 17 — the arcade. True while the Deep Threat
   // cabinet has the viewport. Same overlay contract as the
   // blackjack table: the world, the connection and the 30s
@@ -3982,6 +4029,26 @@ export default function NeighborhoodRoom({
       return;
     }
 
+    // Photo frame tap? (Milestone 30.) The three framed photos
+    // on the casino's back wall are plain wall art: a tap opens
+    // the full image in a lightbox, no walking. They hang above
+    // the floor, so this must be checked before the "ignore taps
+    // off the floor" fallback further down.
+    const frames = s.room.photos;
+    if (frames) {
+      const hit = frames.find(
+        (f) =>
+          wx >= f.rect.x &&
+          wx <= f.rect.x + f.rect.w &&
+          wy >= f.rect.y &&
+          wy <= f.rect.y + f.rect.h
+      );
+      if (hit) {
+        setPhoto({ full: hit.full, id: hit.id });
+        return;
+      }
+    }
+
     // Arcade cabinet tap? (Milestone 17.) Walk to the machine,
     // then the game mounts on the arrival frame — the same
     // walk-then-act shape as chairs and doors.
@@ -4155,7 +4222,7 @@ export default function NeighborhoodRoom({
   // Dance button is not in the toolbar. You cannot see the room
   // from inside them, and if you are SEATED your body is
   // painted in a chair, where a dance would go unseen.
-  const overlayUp = !!keypad || arcadeOpen || raceOpen || theater || bjSeated;
+  const overlayUp = !!keypad || arcadeOpen || raceOpen || theater || bjSeated || !!photo;
 
   const bjPhase = bjTable ? bjTable.phase : null;
   const bjMineSeat = bjTable
@@ -5056,6 +5123,9 @@ export default function NeighborhoodRoom({
             onSuccess={keypadUnlocked}
             onClose={() => setKeypad(null)}
           />
+        )}
+        {photo && (
+          <PhotoOverlay src={photo.full} onClose={() => setPhoto(null)} />
         )}
       </div>
       {/* World chat bar — its own row BELOW the canvas so it never

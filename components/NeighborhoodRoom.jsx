@@ -989,6 +989,7 @@ function SlotOverlay({ balance, themeRef, musicOnRef, onSpin, onClose }) {
           if (seq !== seqRef.current || !mountedRef.current) return;
           stoppedRef.current[k] = true;
           dispRef.current[k] = finalReels[k];
+          if (musicOnRef.current) roomMusic.reelStop();
           forcePaint();
           if (k === SLOTS.REELS - 1) finishSpin(seq, res);
         }, delay)

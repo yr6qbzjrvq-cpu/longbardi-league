@@ -78,6 +78,7 @@ import { roomMusic } from "@/lib/neighborhood/music";
 import { drawTableView, actionsFor, statusLine } from "@/lib/neighborhood/casinoTable";
 import * as HR from "@/lib/neighborhood/horses";
 import { drawTrackView, trackStatus } from "@/lib/neighborhood/horseTrack";
+import * as SLOTS from "@/lib/neighborhood/slots";
 import { createDealAnimator } from "@/lib/neighborhood/dealAnim";
 import dynamic from "next/dynamic";
 import { TEAMS, NEIGHBORHOOD_VOICE } from "@/lib/leagueData";
@@ -866,6 +867,375 @@ function KeypadOverlay({ act, onSuccess, onClose }) {
   );
 }
 
+// ============================================================
+// SlotOverlay (milestone 32) — the playable slot machine
+// ------------------------------------------------------------
+// Full-screen over the world in the same contract as the arcade
+// cabinet and the betting window (absolute inset-0 z-30 inside
+// the canvas frame): the room keeps running underneath,
+// heartbeats included, so peers just see you standing at the
+// machine. Everything money lives on the SERVER — this overlay
+// sends a bet, animates a 4-second spin, and lands the reels on
+// exactly the result the /slots route rolled. It cannot force a
+// win: it never rolls one.
+//
+// The jackpot celebration reuses the party confetti system
+// (lib/neighborhood/party.js) and the Web Audio sting bus
+// (lib/neighborhood/music.js), the same two systems the big red
+// button uses — confetti, Austin's big head, and a fanfare that
+// respects the mute toggle.
+// ============================================================
+function SlotOverlay({ balance, themeRef, musicOnRef, onSpin, onClose }) {
+  const [bet, setBet] = useState(SLOTS.BETS[0]);
+  const [spinning, setSpinning] = useState(false);
+  const [reels, setReels] = useState([SLOTS.HEAD, 4, 6]); // idle display
+  const [result, setResult] = useState(null); // last spin {payout,category,jackpot,bet}
+  const [status, setStatus] = useState("Pick a bet and pull the handle.");
+  const [jackpot, setJackpot] = useState(false); // celebration layer up
+
+  const dispRef = useRef([SLOTS.HEAD, 4, 6]);
+  const stoppedRef = useRef([true, true, true]);
+  const tickRef = useRef(0);
+  const [, setTick] = useState(0);
+  const spinTimerRef = useRef(null);
+  const timeoutsRef = useRef([]);
+  const seqRef = useRef(0);
+  const mountedRef = useRef(true);
+  const confettiCanvasRef = useRef(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (spinTimerRef.current) clearInterval(spinTimerRef.current);
+      timeoutsRef.current.forEach((t) => clearTimeout(t));
+      roomMusic.stopSting(0.15);
+    };
+  }, []);
+
+  function forcePaint() {
+    tickRef.current += 1;
+    if (mountedRef.current) setTick(tickRef.current);
+  }
+
+  function clearTimers() {
+    if (spinTimerRef.current) {
+      clearInterval(spinTimerRef.current);
+      spinTimerRef.current = null;
+    }
+    timeoutsRef.current.forEach((t) => clearTimeout(t));
+    timeoutsRef.current = [];
+  }
+
+  async function handleSpin() {
+    if (spinning) return;
+    if (balance === null || balance < bet) {
+      setStatus("Not enough chips for that bet.");
+      return;
+    }
+    const seq = (seqRef.current += 1);
+    setJackpot(false);
+    setResult(null);
+    setStatus("Good luck…");
+    setSpinning(true);
+    stoppedRef.current = [false, false, false];
+    if (musicOnRef.current) roomMusic.startSting("slotspin", SLOTS.SPIN_MS + 200);
+
+    // Cycle every spinning reel through random symbols.
+    clearTimers();
+    const t0 = Date.now();
+    spinTimerRef.current = setInterval(() => {
+      for (let k = 0; k < SLOTS.REELS; k += 1) {
+        if (!stoppedRef.current[k]) {
+          dispRef.current[k] = Math.floor(Math.random() * SLOTS.SYMBOL_COUNT);
+        }
+      }
+      forcePaint();
+    }, 70);
+
+    let res;
+    try {
+      res = await onSpin(bet);
+    } catch {
+      res = { ok: false, error: "That spin didn't take." };
+    }
+    if (seq !== seqRef.current || !mountedRef.current) return;
+
+    // A refusal (no debit happened on the server) — stop the
+    // reels quickly and say why.
+    if (!res || res.ok === false) {
+      const wait = Math.max(0, 600 - (Date.now() - t0));
+      timeoutsRef.current.push(
+        setTimeout(() => {
+          if (seq !== seqRef.current || !mountedRef.current) return;
+          clearTimers();
+          stoppedRef.current = [true, true, true];
+          roomMusic.stopSting(0.1);
+          forcePaint();
+          setSpinning(false);
+          setStatus((res && res.error) || "That spin didn't take.");
+        }, wait)
+      );
+      return;
+    }
+
+    // Land each reel, staggered, on exactly the server's result.
+    const finalReels = res.reels;
+    const stopAt = [SLOTS.SPIN_MS - 1300, SLOTS.SPIN_MS - 700, SLOTS.SPIN_MS - 100];
+    for (let k = 0; k < SLOTS.REELS; k += 1) {
+      const delay = Math.max(0, stopAt[k] - (Date.now() - t0));
+      timeoutsRef.current.push(
+        setTimeout(() => {
+          if (seq !== seqRef.current || !mountedRef.current) return;
+          stoppedRef.current[k] = true;
+          dispRef.current[k] = finalReels[k];
+          forcePaint();
+          if (k === SLOTS.REELS - 1) finishSpin(seq, res);
+        }, delay)
+      );
+    }
+  }
+
+  function finishSpin(seq, res) {
+    clearTimers();
+    if (seq !== seqRef.current || !mountedRef.current) return;
+    setReels([...res.reels]);
+    setSpinning(false);
+    setResult(res);
+    if (res.jackpot) {
+      setStatus(`JACKPOT! Three Austins — you win $${res.payout}!`);
+      celebrate(res);
+    } else if (res.payout > 0) {
+      setStatus(`Winner! Paid $${res.payout}.`);
+      if (musicOnRef.current) roomMusic.startSting("slotwin", 1500);
+      else roomMusic.stopSting(0.1);
+    } else {
+      setStatus("No win — spin again.");
+      roomMusic.stopSting(0.1);
+    }
+  }
+
+  // The jackpot: confetti + Austin's big head + a fanfare.
+  function celebrate(res) {
+    setJackpot(true);
+    if (musicOnRef.current) roomMusic.startSting("jackpot", 5200);
+    const party = {
+      at: Date.now(),
+      durationMs: 6000,
+      confetti: makeConfetti(partySeedFromId(`slot-${Date.now()}`), CONFETTI_COUNT),
+    };
+    let raf = 0;
+    const loop = () => {
+      const canvas = confettiCanvasRef.current;
+      if (!canvas || !mountedRef.current) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(1, Math.round(rect.width));
+      const h = Math.max(1, Math.round(rect.height));
+      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+      }
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const alive = drawParty(ctx, w, h, party, Date.now(), themeRef.current);
+      if (alive) {
+        raf = requestAnimationFrame(loop);
+      } else {
+        ctx.clearRect(0, 0, w, h);
+      }
+    };
+    raf = requestAnimationFrame(loop);
+    timeoutsRef.current.push(
+      setTimeout(() => {
+        cancelAnimationFrame(raf);
+      }, 6300)
+    );
+  }
+
+  function ReelSymbol({ id, big }) {
+    const sym = SLOTS.SYMBOLS[id] || SLOTS.SYMBOLS[0];
+    if (sym.isHead) {
+      return (
+        <img
+          src={sym.img}
+          alt="Austin"
+          draggable={false}
+          className={big ? "h-full w-full object-contain" : "h-full w-full object-contain"}
+        />
+      );
+    }
+    return (
+      <span className="flex h-full w-full items-center justify-center leading-none" style={{ fontSize: "min(15vw, 3.5rem)" }}>
+        {sym.glyph}
+      </span>
+    );
+  }
+
+  const pay = SLOTS.payTable();
+  const canSpin = !spinning && balance !== null && balance >= bet;
+  const disp = dispRef.current;
+
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col overflow-hidden bg-[#2a0d33] text-white dark:bg-[#160619]">
+      {/* header: title, balance, close */}
+      <div className="flex items-center justify-between gap-2 border-b-2 border-[#f2c81b] bg-[#3a1147] px-3 py-2 dark:bg-[#1e0824]">
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="truncate font-display text-sm font-semibold uppercase tracking-widest text-[#f2c81b] sm:text-base">
+            Lucky Slots
+          </p>
+          <span className="shrink-0 rounded-full bg-[#3fae5f] px-2 py-0.5 font-display text-[11px] font-semibold uppercase tracking-widest text-white">
+            ${balance === null ? "—" : balance} chips
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-h-[44px] shrink-0 rounded-md border border-[#f2c81b] px-3 font-display text-xs uppercase tracking-widest text-[#f2c81b] transition-colors hover:bg-[#f2c81b] hover:text-[#3a1147]"
+        >
+          ✕ Back to the Floor
+        </button>
+      </div>
+
+      {/* body */}
+      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3">
+        <div className="mx-auto flex w-full max-w-md flex-col items-center">
+          {/* the GRAND PRIZE marquee */}
+          <div className="mb-3 w-full rounded-xl border-2 border-[#f2c81b] bg-[#4a1659]/60 px-3 py-2 text-center shadow-[0_0_18px_rgba(242,200,27,0.35)]">
+            <p className="font-display text-xs font-semibold uppercase tracking-[0.2em] text-[#ffe9a8]">
+              ★ Grand Prize ★
+            </p>
+            <div className="mt-1 flex items-center justify-center gap-2">
+              <span className="flex items-center gap-0.5">
+                {[0, 1, 2].map((i) => (
+                  <img key={i} src={SLOTS.SYMBOLS[0].img} alt="Austin" className="h-7 w-7 rounded-full border border-[#f2c81b]" draggable={false} />
+                ))}
+              </span>
+              <span className="font-display text-lg font-bold text-[#f2c81b]">
+                WIN UP TO ${SLOTS.GRAND_PRIZE_MAX}
+              </span>
+            </div>
+            <p className="mt-0.5 font-display text-[10px] uppercase tracking-widest text-white/70">
+              Three Austins pays 50× your bet
+            </p>
+          </div>
+
+          {/* the reels */}
+          <div className="flex w-full items-stretch justify-center gap-2 rounded-2xl border-4 border-[#f2c81b] bg-[#120416] p-3 shadow-inner">
+            {[0, 1, 2].map((k) => (
+              <div
+                key={k}
+                className={`relative flex aspect-square flex-1 items-center justify-center overflow-hidden rounded-lg border-2 bg-[#f7f0dc] p-1.5 ${
+                  result && result.jackpot ? "border-[#f2c81b]" : "border-[#7a4a2c]"
+                } ${!stoppedRef.current[k] ? "blur-[1px] brightness-110" : ""}`}
+              >
+                <ReelSymbol id={disp[k]} big />
+              </div>
+            ))}
+          </div>
+
+          {/* status line */}
+          <p className={`mt-2 min-h-[1.5rem] text-center font-display text-sm ${result && result.payout > 0 ? "text-[#7CFFB0]" : "text-white/85"}`}>
+            {status}
+          </p>
+
+          {/* bet selector */}
+          <div className="mt-2 flex w-full items-center justify-center gap-2">
+            {SLOTS.BETS.map((b) => (
+              <button
+                key={b}
+                type="button"
+                disabled={spinning}
+                onClick={() => setBet(b)}
+                aria-pressed={bet === b}
+                className={`min-h-[44px] flex-1 rounded-lg border-2 font-display text-base font-semibold transition-colors disabled:opacity-40 ${
+                  bet === b
+                    ? "border-[#f2c81b] bg-[#f2c81b] text-[#3a1147]"
+                    : "border-white/30 bg-white/5 text-white"
+                }`}
+              >
+                ${b}
+              </button>
+            ))}
+          </div>
+
+          {/* SPIN */}
+          <button
+            type="button"
+            disabled={!canSpin}
+            onClick={handleSpin}
+            className="mt-2 min-h-[56px] w-full rounded-xl border-2 border-[#f2c81b] bg-gradient-to-b from-[#e2543f] to-[#b8202c] font-display text-xl font-bold uppercase tracking-[0.2em] text-white shadow-lg transition active:scale-[0.98] disabled:opacity-40"
+          >
+            {spinning ? "Spinning…" : balance !== null && balance < bet ? "Not enough chips" : `Spin  ($${bet})`}
+          </button>
+
+          {/* paytable */}
+          <div className="mt-4 w-full rounded-xl border border-white/20 bg-black/25 p-3">
+            <p className="mb-2 text-center font-display text-xs font-semibold uppercase tracking-widest text-[#f2c81b]">
+              Paytable
+            </p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-white/60">
+                  <th className="py-1 text-left font-display text-[11px] font-normal uppercase tracking-wider">Line</th>
+                  {pay.bets.map((b) => (
+                    <th key={b} className="py-1 text-right font-display text-[11px] font-normal uppercase tracking-wider">${b}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pay.rows.map((r) => (
+                  <tr key={r.key} className={`border-t border-white/10 ${r.grand ? "text-[#f2c81b]" : "text-white/90"}`}>
+                    <td className="py-1.5 text-left font-display text-[13px]">
+                      {r.grand ? "★ " : ""}{r.label}
+                      <span className="ml-1 text-[11px] text-white/50">({r.mult}×)</span>
+                    </td>
+                    {r.prizes.map((prize, i) => (
+                      <td key={i} className="py-1.5 text-right font-mono tabular-nums">${prize}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-2 text-center text-[10px] text-white/45">
+              1% chance of the grand prize · same wallet as blackjack &amp; the horses · play money
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* JACKPOT celebration layer */}
+      {jackpot && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/55">
+          <canvas ref={confettiCanvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+          <div className="relative flex flex-col items-center px-4 text-center">
+            <p className="animate-pulse font-display text-4xl font-black uppercase tracking-[0.15em] text-[#f2c81b] drop-shadow-[0_2px_10px_rgba(0,0,0,0.7)] sm:text-6xl">
+              Jackpot!
+            </p>
+            <img
+              src="/neighborhood/slot-head-big.webp"
+              alt="Austin"
+              draggable={false}
+              className="my-3 h-40 w-40 rounded-full border-4 border-[#f2c81b] shadow-[0_0_40px_rgba(242,200,27,0.8)] sm:h-56 sm:w-56"
+            />
+            <p className="font-display text-2xl font-bold text-white drop-shadow sm:text-3xl">
+              Three Austins — you win ${result ? result.payout : ""}!
+            </p>
+            <button
+              type="button"
+              onClick={() => setJackpot(false)}
+              className="mt-4 min-h-[48px] rounded-xl border-2 border-[#f2c81b] bg-[#f2c81b] px-8 font-display text-lg font-bold uppercase tracking-widest text-[#3a1147] transition active:scale-95"
+            >
+              Cash In
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function NeighborhoodRoom({
   player,
   preview,
@@ -893,6 +1263,15 @@ export default function NeighborhoodRoom({
   const [arcadeOpen, setArcadeOpen] = useState(false);
   const arcadeFnRef = useRef(null);
   arcadeFnRef.current = () => setArcadeOpen(true);
+  // Milestone 32 — the slot machines. True while a machine has
+  // the viewport; same overlay contract as the arcade cabinet
+  // and the betting window. A spin is individual, so nothing is
+  // broadcast — peers just see you standing at the machine.
+  const [slotOpen, setSlotOpen] = useState(false);
+  const slotOpenRef = useRef(false);
+  slotOpenRef.current = slotOpen;
+  const slotOpenFnRef = useRef(null);
+  slotOpenFnRef.current = () => setSlotOpen(true);
   // ---- background music (milestone 18) ----
   // On by default at a polite volume; the mute choice sticks
   // per browser. The synth engine itself lives in
@@ -1106,6 +1485,8 @@ export default function NeighborhoodRoom({
       pendingSeat: null,
       // arcade (milestone 17): true while walking to the cabinet
       pendingArcade: false,
+      // slots (milestone 32): true while walking to a machine
+      pendingSlot: false,
       // HSPN Downs (milestone 24): true while walking to the
       // betting window, plus the one line of live race state the
       // tote board in the world draws with
@@ -1152,8 +1533,8 @@ export default function NeighborhoodRoom({
   // The arcade and the racetrack soften the room track without
   // stopping it.
   useEffect(() => {
-    roomMusic.setDucked(arcadeOpen || raceOpen);
-  }, [arcadeOpen, raceOpen]);
+    roomMusic.setDucked(arcadeOpen || raceOpen || slotOpen);
+  }, [arcadeOpen, raceOpen, slotOpen]);
   // Unmount = fade out and power the graph down.
   // Unmount = fade out and power the graph down. roomMusic.stop()
   // also kills any party jingle still playing (milestone 25).
@@ -2479,6 +2860,7 @@ export default function NeighborhoodRoom({
       s.pendingSeat = null;
       s.pendingArcade = false;
       s.pendingTrack = false;
+      s.pendingSlot = false;
       s.walk = null;
       s.walking = false;
       s.walkT = 0;
@@ -2642,6 +3024,32 @@ export default function NeighborhoodRoom({
     if (bjStake < BJ.MIN_BET) return;
     const placed = await bjCall("bet", { amount: bjStake });
     if (placed && placed.ok !== false) await bjCall("ready");
+  }
+
+  // Milestone 32 — pull a slot handle. The client sends only the
+  // bet; the /slots route rolls the reels and the 1% jackpot and
+  // returns the result to land on. A refusal (insufficient
+  // chips, rate limit) comes back as a rejected api() call that
+  // still carries the true balance, which we apply.
+  async function slotSpin(bet) {
+    const s = sRef.current;
+    if (!s.conn || !s.conn.slots) {
+      return { ok: false, code: "noconn", error: "The slots need the live connection — try a refresh." };
+    }
+    try {
+      const res = await s.conn.slots("spin", { bet });
+      if (res && res.balance !== null && res.balance !== undefined) setBjBalance(res.balance);
+      return res;
+    } catch (err) {
+      const data = (err && err.data) || {};
+      if (data.balance !== null && data.balance !== undefined) setBjBalance(data.balance);
+      return {
+        ok: false,
+        code: (err && err.code) || "error",
+        error: (err && err.message) || "That spin didn't take.",
+        ...data,
+      };
+    }
   }
 
   // ---- the horse race (milestone 24) -----------------------
@@ -3148,6 +3556,16 @@ export default function NeighborhoodRoom({
     return () => window.removeEventListener("keydown", onKey);
   }, [raceOpen]);
 
+  // ...and away from a slot machine (milestone 32).
+  useEffect(() => {
+    if (!slotOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setSlotOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [slotOpen]);
+
   // ---- chat ------------------------------------------------
   function pushBubble(playerId, id, text) {
     const s = sRef.current;
@@ -3330,6 +3748,13 @@ export default function NeighborhoodRoom({
       if (!moving && s.pendingTrack) {
         s.pendingTrack = false;
         if (raceOpenFnRef.current) raceOpenFnRef.current();
+      }
+      // Arrived at a slot machine (milestone 32) — open the
+      // slot overlay. Same completion-frame shape as the arcade
+      // and the betting window.
+      if (!moving && s.pendingSlot) {
+        s.pendingSlot = false;
+        if (slotOpenFnRef.current) slotOpenFnRef.current();
       }
       // Arrived behind the bar (milestone 25) — hit the button.
       // Same "fires on the completion frame" reasoning as every
@@ -3997,6 +4422,7 @@ export default function NeighborhoodRoom({
     // must not fire on arrival.
     s.pendingArcade = false;
     s.pendingTrack = false;
+    s.pendingSlot = false;
     s.pendingParty = false;
     // This tap — a walk, a door, a prop, a keypad, the arcade
     // cabinet — is a deliberate action, so it ends your dance
@@ -4099,6 +4525,36 @@ export default function NeighborhoodRoom({
         return;
       }
       s.pendingTrack = true;
+      s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
+      s.marker = { x: spot.x, y: spot.y, t: performance.now() };
+      if (s.conn) queueMoveSend(spot.x, spot.y);
+      return;
+    }
+
+    // Slot machine tap? (Milestone 32.) Same walk-then-open
+    // shape as the arcade cabinet and the betting window: walk
+    // to the tapped machine, and the slot overlay opens on the
+    // arrival frame. All six open the same personal overlay.
+    const slot = (s.room.slots || []).find(
+      (m) =>
+        wx >= m.hotspot.x &&
+        wx <= m.hotspot.x + m.hotspot.w &&
+        wy >= m.hotspot.y &&
+        wy <= m.hotspot.y + m.hotspot.h
+    );
+    if (slot) {
+      const spot = nearestWalkable(s.room, s.grid, slot.approach.x, slot.approach.y);
+      if (!spot) return;
+      const path = findPath(s.room, s.grid, s.pos.x, s.pos.y, spot.x, spot.y);
+      s.pendingExit = null;
+      s.pendingSeat = null;
+      s.pendingArcade = false;
+      s.pendingTrack = false;
+      if (path.length === 0) {
+        setSlotOpen(true); // already standing at the machine
+        return;
+      }
+      s.pendingSlot = true;
       s.walk = { origin: { x: s.pos.x, y: s.pos.y }, path, startedAt: Date.now() };
       s.marker = { x: spot.x, y: spot.y, t: performance.now() };
       if (s.conn) queueMoveSend(spot.x, spot.y);
@@ -4222,7 +4678,7 @@ export default function NeighborhoodRoom({
   // Dance button is not in the toolbar. You cannot see the room
   // from inside them, and if you are SEATED your body is
   // painted in a chair, where a dance would go unseen.
-  const overlayUp = !!keypad || arcadeOpen || raceOpen || theater || bjSeated || !!photo;
+  const overlayUp = !!keypad || arcadeOpen || raceOpen || slotOpen || theater || bjSeated || !!photo;
 
   const bjPhase = bjTable ? bjTable.phase : null;
   const bjMineSeat = bjTable
@@ -5116,6 +5572,15 @@ export default function NeighborhoodRoom({
               )}
             </div>
           </div>
+        )}
+        {slotOpen && (
+          <SlotOverlay
+            balance={bjBalance}
+            themeRef={themeRef}
+            musicOnRef={musicOnRef}
+            onSpin={slotSpin}
+            onClose={() => setSlotOpen(false)}
+          />
         )}
         {keypad && (
           <KeypadOverlay

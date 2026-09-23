@@ -24,13 +24,13 @@ eq("weights total 10000", S.WEIGHT_TOTAL, 10000);
 
 console.log("\n-- the paytable (what Austin asked for) --");
 eq("jackpot pays 50x", S.JACKPOT_MULT, 50);
-eq("triple pays 5x", S.TRIPLE_MULT, 5);
+eq("triple pays 3x", S.TRIPLE_MULT, 3);
 eq("two heads pays 2x", S.TWO_HEAD_MULT, 2);
 eq("$1 jackpot = $50", S.payoutFor("jackpot", 1), 50);
 eq("$5 jackpot = $250", S.payoutFor("jackpot", 5), 250);
 eq("$10 jackpot = $500 (the grand prize)", S.payoutFor("jackpot", 10), 500);
-eq("$1 triple = $5", S.payoutFor("triple", 1), 5);
-eq("$10 triple = $50", S.payoutFor("triple", 10), 50);
+eq("$1 triple = $3", S.payoutFor("triple", 1), 3);
+eq("$10 triple = $30", S.payoutFor("triple", 10), 30);
 eq("$1 two-heads = $2", S.payoutFor("two_heads", 1), 2);
 eq("$10 two-heads = $20", S.payoutFor("two_heads", 10), 20);
 eq("a loss pays $0", S.payoutFor("lose", 10), 0);
@@ -41,7 +41,7 @@ console.log("\n-- the jackpot chance is EXACTLY 1% --");
 eq("JACKPOT_CHANCE", S.JACKPOT_CHANCE, 0.01);
 {
   // Empirical: roll a big sample against a deterministic RNG and
-  // confirm the jackpot rate lands on ~1%.
+  // confirm the outcome rates land on the table.
   const rng = lcg(0xC0FFEE);
   const N = 500000;
   const count = { jackpot: 0, triple: 0, two_heads: 0, lose: 0 };
@@ -51,7 +51,24 @@ eq("JACKPOT_CHANCE", S.JACKPOT_CHANCE, 0.01);
   const th = count.two_heads / N;
   ok(`jackpot ~1% (${(jp * 100).toFixed(3)}%)`, Math.abs(jp - 0.01) < 0.0015, { jp });
   ok(`triple ~6% (${(tr * 100).toFixed(3)}%)`, Math.abs(tr - 0.06) < 0.003, { tr });
-  ok(`two-heads ~5% (${(th * 100).toFixed(3)}%)`, Math.abs(th - 0.05) < 0.003, { th });
+  ok(`two-heads ~14% (${(th * 100).toFixed(3)}%)`, Math.abs(th - 0.14) < 0.004, { th });
+}
+
+console.log("\n-- a regular (non-jackpot) win lands ~20% of spins --");
+{
+  const rng = lcg(0x5107);
+  const N = 500000;
+  let reg = 0;
+  let any = 0;
+  for (let i = 0; i < N; i += 1) {
+    const spin = S.rollSpin(rng);
+    if (spin.win) any += 1;
+    if (spin.win && !spin.jackpot) reg += 1;
+  }
+  const regRate = reg / N;
+  const anyRate = any / N;
+  ok(`regular win ~20% (${(regRate * 100).toFixed(3)}%)`, Math.abs(regRate - 0.20) < 0.005, { regRate });
+  ok(`any win ~21% (${(anyRate * 100).toFixed(3)}%)`, Math.abs(anyRate - 0.21) < 0.005, { anyRate });
 }
 
 console.log("\n-- the painted reels always read as the rolled category --");
@@ -81,11 +98,11 @@ console.log("\n-- the painted reels always read as the rolled category --");
   ok("two_heads reels always have exactly two heads", allTwo);
 }
 
-console.log("\n-- RTP is a sane 90% --");
+console.log("\n-- RTP is a sane 96% --");
 {
   const theo = S.rtp();
-  ok(`theoretical RTP = 0.90 (${theo.toFixed(4)})`, Math.abs(theo - 0.90) < 1e-9, { theo });
-  ok("RTP is in the friendly 85-95% band", theo >= 0.85 && theo <= 0.95);
+  ok(`theoretical RTP = 0.96 (${theo.toFixed(4)})`, Math.abs(theo - 0.96) < 1e-9, { theo });
+  ok("RTP is in the friendly 90-98% band (<= 100%, no runaway inflation)", theo >= 0.90 && theo <= 0.98);
   // Empirical dollars: play $1 a spin over a big sample and
   // confirm the return-per-dollar lands near 0.90.
   const rng = lcg(0xBEEF);
@@ -97,7 +114,7 @@ console.log("\n-- RTP is a sane 90% --");
     returned += S.payoutFor(S.rollSpin(rng).category, 1);
   }
   const emp = returned / wagered;
-  ok(`empirical RTP ~0.90 (${emp.toFixed(4)})`, Math.abs(emp - 0.90) < 0.03, { emp });
+  ok(`empirical RTP ~0.96 (${emp.toFixed(4)})`, Math.abs(emp - 0.96) < 0.03, { emp });
 }
 
 console.log("\n-- bet validation --");

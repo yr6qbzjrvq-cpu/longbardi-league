@@ -46,6 +46,8 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Horse-race engine (pure: schedule, race sim, payouts) | `lib/neighborhood/horses.js` |
 | Racetrack art (grandstand, turf, galloping horses) | `lib/neighborhood/horseTrack.js` |
 | Horse-race harness (`node scripts/test-horses.mjs`) | `scripts/test-horses.mjs` |
+| Slot machine engine (pure: symbols, odds, paytable) | `lib/neighborhood/slots.js` |
+| Slot harness (`node scripts/test-slots.mjs`) | `scripts/test-slots.mjs` |
 | Chat text rules (sanitize, cap, filter) | `lib/neighborhood/chat.js` |
 | Server helpers + Realtime broadcast | `lib/neighborhood/multiplayerServer.js` |
 | Client realtime transport | `lib/neighborhood/realtime.js` |
@@ -58,9 +60,11 @@ is a different rumor and it is also true — see "The Dairy chain".)
 | Party rate limit + room lock (run once) | `supabase/neighborhood_party.sql` |
 | Casino wallets + blackjack tables (run once) | `supabase/neighborhood_casino.sql` |
 | Horse races + wallet delta + rate limit (run once) | `supabase/neighborhood_horses.sql` |
+| Slots rate limit + column (run once) | `supabase/neighborhood_slots.sql` |
 | Gameplay APIs | `app/api/neighborhood/{join,move,heartbeat,leave,chat,throw,party,token}/route.js` |
 | Blackjack API (seats, bets, cards, money) | `app/api/neighborhood/blackjack/route.js` |
 | Horse-race API (the clock, bets, payouts) | `app/api/neighborhood/horses/route.js` |
+| Slots API (bet, server RNG, payout) | `app/api/neighborhood/slots/route.js` |
 | Screen-share auth (admin-only mint) | `app/api/neighborhood/broadcast/route.js` |
 | Screen-share grant check (any player) | `app/api/neighborhood/broadcast/verify/route.js` |
 | ICE / TURN credentials (any active player, any room) | `app/api/neighborhood/ice/route.js` |
@@ -1021,9 +1025,10 @@ east, with a big roadside arrow — CASINO, in Oswald, ringed by bulbs that chas
 around the board and run out into the point of the arrow. Walk to the end of
 the path and you are on the **Casino Strip**; one building, a marquee that
 never stops blinking, and a door. Through the door is the **Casino** floor:
-loud patterned carpet, six slot machines along the walls (scenery — they spin
-and blink and that is all they do), a cashier cage, and a blackjack table in
-the middle with three chairs.
+loud patterned carpet, six slot machines along the walls (now **playable** —
+tap one to spin for real; see "Lucky Slots" below, milestone 32 — they used to
+just spin and blink), a cashier cage, and a blackjack table in the middle with
+three chairs.
 
 Sit in a chair and the view changes to first person: you are looking at the
 felt from your seat, the dealer is across from you, your cards are the big ones
@@ -2123,3 +2128,120 @@ The confetti is party.js's own art, reused piece for piece — same palette,
 same rectangles, ribbons and rounds, same tumble — just re-aimed into world
 pixels off the board face. No music and no disco: that is still the big red
 button's job.
+
+## Lucky Slots (milestone 32)
+
+Austin: *"Can you make the slot machines actually work? $1, $5, $10 per spin.
+Spin for 4 seconds. 1% chance of grand prize. ... Make my head the grand prize
+if you get three in a row."*
+
+The six slot machines on the casino floor used to be scenery — they spun and
+blinked and that was all. They are now a real, **server-authoritative** slot
+game. Tap any machine, your avatar walks to it, and a slot overlay opens
+full-screen over the world (the same walk-then-open contract as the arcade
+cabinet and the betting window: `absolute inset-0 z-30`, nothing paused
+underneath, heartbeats still running, and everyone else in the room just sees
+you standing at the machine). Three reels, a **$1 / $5 / $10** bet selector, a
+**SPIN** button, your casino balance in the header, and the paytable printed
+right on the overlay. Escape or "✕ Back to the Floor" closes it.
+
+### The paytable
+
+Chosen to hit Austin's brief — a real, wager-scaled grand prize at exactly 1% —
+and land the machine on a friendly **90% RTP**.
+
+| Line | Chance | Pays | $1 bet | $5 bet | $10 bet |
+| --- | --- | --- | --- | --- | --- |
+| ★ **3× Austin** (the grand prize) | **1.00%** | **50×** | $50 | $250 | **$500** |
+| 3× any other symbol | 6.00% | 5× | $5 | $25 | $50 |
+| 2× Austin | 5.00% | 2× | $2 | $10 | $20 |
+| anything else | 88.00% | 0× | — | — | — |
+
+`payout = multiplier × bet`, whole dollars at every bet. **RTP = 0.01·50 +
+0.06·5 + 0.05·2 = 0.90** — a 10% house edge, enough that a spin feels like a
+gamble without draining anyone (and it is play money that refills to $100 on a
+busted return anyway). The grand prize scales with the wager exactly as asked:
+$1 → $50, $5 → $250, $10 → $500. The reel symbols are Austin's head (the
+jackpot, served as `/neighborhood/slot-head.webp`) plus six emoji symbols
+(football, trophy, money bag, bell, cherry, lucky 7).
+
+Everything above lives as **one source of truth** in `lib/neighborhood/slots.js`
+and is asserted by `node scripts/test-slots.mjs` (32 assertions: the exact 1%,
+the 90% RTP, every dollar payout, and that a painted LOSE never accidentally
+reads as a win nor a win as a loss).
+
+### Advertising the grand prize
+
+Two lit "GRAND PRIZE" boards hang over the slot banks on the floor (house art
+style, chasing bulbs, both themes): **3× [Austin's head] — WIN $500**. The slot
+overlay repeats the boast at the top of the machine, and the paytable marks the
+grand-prize line with a ★.
+
+### Server-authoritative, and why a client can't force a win
+
+A spin is **individual and instant** — unlike blackjack (a shared hand) and the
+racetrack (a shared race), there is no shared state, no clock to pull, and no
+broadcast. So there is no state table: the only thing a spin touches is the
+wallet.
+
+- The client sends an **intent** — `{ action: "spin", bet }` — and never a
+  result. `POST /api/neighborhood/slots` validates the player (real, standing on
+  the casino floor, not banned), the bet ($1/$5/$10 only), and a Postgres
+  sliding-window rate limit (`neighborhood_record_slot`, 8 / 3s, anti-spam
+  only). Then it **debits the stake atomically** (`neighborhood_wallet_delta`,
+  which floors the balance at zero — so that same call is the balance check),
+  rolls the outcome and the 1% jackpot with a **crypto RNG** (the same source
+  the blackjack shoe and the race winner come off, never `Math.random`),
+  **credits any win atomically**, and returns the reels plus the payout.
+- The order is the safety argument: **debit → roll → credit.** The stake can
+  never be taken without the spin happening, the spin can never happen without
+  the stake, and a dropped credit is a lost payout, never a minted one. A
+  client cannot force a win because it never rolls one — the 1% jackpot exists
+  only in this route.
+- **Same wallet as blackjack and the horses.** `neighborhood_wallets` is one
+  bankroll for the whole casino: win $500 on the slots and you can go sit down
+  and bet it on a hand. The $100-on-first-visit grant and the top-up of a
+  busted player back to $100 are the same `neighborhood_casino_enter` the other
+  two games use — so a player can never be locked out and the casino still can
+  only be won at, not lost at.
+
+Run once in Supabase: `supabase/neighborhood_slots.sql` (adds the `slot_times`
+column and the `SECURITY DEFINER` rate-limit function, PUBLIC execute revoked —
+the same house pattern as the casino and horses SQL). The wallet mover and the
+grant already exist from those milestones and are reused unchanged.
+
+### The 4-second spin is deterministic theatre
+
+The reels are decided by the server; the client only animates onto them. On
+SPIN the three reels blur and cycle random symbols, then **land one at a time**
+(staggered ~2.7s / 3.3s / 3.9s into a 4-second spin) on exactly the symbols the
+route rolled — the same "the reveal shows server state" discipline as the
+blackjack deal animation and the horse race. If the server refuses the spin
+(insufficient chips, rate limit — no money moved), the reels stop early and the
+overlay says why.
+
+### The jackpot celebration
+
+Three Austins pays out **and** throws a party. The celebration reuses the two
+systems the big red button uses:
+
+- **Confetti** from `lib/neighborhood/party.js` (`makeConfetti` + `drawParty`),
+  painted over the overlay on its own canvas.
+- **A jackpot fanfare** on the Web Audio **sting bus** in
+  `lib/neighborhood/music.js` — a new `jackpot` sting (I-IV-V-I brass swell,
+  four-on-the-floor kicks, a bell cascade) that **respects the mute toggle**
+  exactly like the party jingle (muted = the same confetti and big head, in
+  silence). Regular spins get a subtle `slotspin` ticking bed for the 4 seconds
+  and a short `slotwin` chime on a non-jackpot win.
+- **Austin's big head** (`/neighborhood/slot-head-big.webp`) front and centre
+  under a flashing "JACKPOT!", with the prize amount and a "Cash In" button.
+
+### Multiplayer
+
+Slots are individual: each player spins their own machine against their own
+wallet, and the outcome is theirs. Nothing is broadcast — peers just see your
+avatar at the machine — so slots do not touch blackjack, the horses, chat,
+tomatoes, the photo frames or the TV. The room engine handles the tap targets
+(the new `slots` config on `casino-floor` in `lib/neighborhood/rooms.js`); the
+overlay, the animation and the celebration live in `SlotOverlay` inside
+`components/NeighborhoodRoom.jsx`.

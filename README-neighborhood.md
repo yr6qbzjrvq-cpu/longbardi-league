@@ -2148,14 +2148,14 @@ right on the overlay. Escape or "✕ Back to the Floor" closes it.
 ### The paytable
 
 Chosen to hit Austin's brief — a real, wager-scaled grand prize at exactly 1% —
-and land the machine on a friendly **90% RTP**.
+and land the machine on a friendly **96% RTP**.
 
 | Line | Chance | Pays | $1 bet | $5 bet | $10 bet |
 | --- | --- | --- | --- | --- | --- |
 | ★ **3× Austin** (the grand prize) | **1.00%** | **50×** | $50 | $250 | **$500** |
-| 3× any other symbol | 6.00% | 5× | $5 | $25 | $50 |
-| 2× Austin | 5.00% | 2× | $2 | $10 | $20 |
-| anything else | 88.00% | 0× | — | — | — |
+| 3× any other symbol | 6.00% | 3× | $3 | $15 | $30 |
+| 2× Austin | 14.00% | 2× | $2 | $10 | $20 |
+| anything else | 79.00% | 0× | — | — | — |
 
 `payout = multiplier × bet`, whole dollars at every bet. **RTP = 0.01·50 +
 0.06·5 + 0.05·2 = 0.90** — a 10% house edge, enough that a spin feels like a
@@ -2166,8 +2166,8 @@ jackpot, served as `/neighborhood/slot-head.webp`) plus six emoji symbols
 (football, trophy, money bag, bell, cherry, lucky 7).
 
 Everything above lives as **one source of truth** in `lib/neighborhood/slots.js`
-and is asserted by `node scripts/test-slots.mjs` (32 assertions: the exact 1%,
-the 90% RTP, every dollar payout, and that a painted LOSE never accidentally
+and is asserted by `node scripts/test-slots.mjs` (34 assertions: the exact 1%,
+the 96% RTP, every dollar payout, and that a painted LOSE never accidentally
 reads as a win nor a win as a loss).
 
 ### Advertising the grand prize
@@ -2231,8 +2231,8 @@ systems the big red button uses:
   `lib/neighborhood/music.js` — a new `jackpot` sting (I-IV-V-I brass swell,
   four-on-the-floor kicks, a bell cascade) that **respects the mute toggle**
   exactly like the party jingle (muted = the same confetti and big head, in
-  silence). Regular spins get a subtle `slotspin` ticking bed for the 4 seconds
-  and a short `slotwin` chime on a non-jackpot win.
+  silence). Regular spins get a `slotspin` whirr (rapid ratchet ticks + a low motor hum) for the 4 seconds
+  and a `reelStop` click as each reel lands, then a short `slotwin` chime on a non-jackpot win — all on the sting bus, all silent when muted.
 - **Austin's big head** (`/neighborhood/slot-head-big.webp`) front and centre
   under a flashing "JACKPOT!", with the prize amount and a "Cash In" button.
 
